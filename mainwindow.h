@@ -29,8 +29,14 @@
 #include <QtXml>
 #include <QUrl>
 #include <QUrlQuery>
-#include <QtWebEngineWidgets>
+#include <QWebEngineView>
+#include <QWebEnginePage>
+#include <QWebEngineProfile>
+#include <QWebEngineSettings>
+#include <QWebEngineUrlRequestInterceptor>
+#include <QWebEngineUrlRequestInfo>
 #include <QFontDatabase>
+#include <QRegularExpression>
 #include "ui_mainwindow.h"
 #include "ui_metadata-dialog.h"
 #include "clipgrab.h"
@@ -43,7 +49,9 @@ class SearchWebEngineUrlRequestInterceptor : public QWebEngineUrlRequestIntercep
 {
     Q_OBJECT
 public:
-    void interceptRequest(QWebEngineUrlRequestInfo &info) {
+    using QWebEngineUrlRequestInterceptor::QWebEngineUrlRequestInterceptor;
+
+    void interceptRequest(QWebEngineUrlRequestInfo &info) override {
         if (info.requestUrl().toString().startsWith("https://m.youtube.com/watch?")) {
             info.block(true);
             QUrl url;
@@ -63,22 +71,25 @@ class SearchWebEnginePage : public QWebEnginePage
 {
     Q_OBJECT
 public:
-    SearchWebEnginePage(QWebEngineProfile* profile, QObject* parent = 0) :  QWebEnginePage(profile, parent)
+    SearchWebEnginePage(QWebEngineProfile* profile, QObject* parent = nullptr) :  QWebEnginePage(profile, parent)
     {
         this->setAudioMuted(true);
-        SearchWebEngineUrlRequestInterceptor* interceptor = new SearchWebEngineUrlRequestInterceptor();
-        this->profile()->setRequestInterceptor(interceptor);
-        connect(interceptor, SIGNAL(intercepted(QUrl)), this, SLOT(handleInterceptedUrl(QUrl)));
+        // Parent the interceptor to the profile so its lifetime matches the
+        // profile that holds a pointer to it (avoids dangling pointer in profile).
+        SearchWebEngineUrlRequestInterceptor* interceptor = new SearchWebEngineUrlRequestInterceptor(profile);
+        this->profile()->setUrlRequestInterceptor(interceptor);
+        connect(interceptor, &SearchWebEngineUrlRequestInterceptor::intercepted, this, &SearchWebEnginePage::handleInterceptedUrl);
     }
 
 
-    bool acceptNavigationRequest(const QUrl & url, QWebEnginePage::NavigationType type, bool isMainFrame)
+    bool acceptNavigationRequest(const QUrl & url, QWebEnginePage::NavigationType type, bool isMainFrame) override
     {
         if (!isMainFrame) return true;
 
         if (type == QWebEnginePage::NavigationTypeTyped)
         {
-            if (QRegExp("https://(www|m)\\.youtube.com/watch").indexIn(url.toString()) > -1)
+            QRegularExpression watchRe("https://(www|m)\\.youtube.com/watch");
+            if (watchRe.match(url.toString()).hasMatch())
             {
                 emit linkClicked(url);
                 return false;
@@ -87,7 +98,8 @@ public:
         }
         if (type == QWebEnginePage::NavigationTypeLinkClicked)
         {
-            if (QRegExp("https://(www|m)\\.youtube.com").indexIn(url.toString()) > -1)
+            QRegularExpression hostRe("https://(www|m)\\.youtube.com");
+            if (hostRe.match(url.toString()).hasMatch())
             {
                 emit linkClicked(url);
             }
@@ -95,7 +107,7 @@ public:
         return false;
     }
 protected:
-    void javaScriptConsoleMessage(QWebEnginePage::JavaScriptConsoleMessageLevel /*level*/, const QString & /*message*/, int /*lineNumber*/, const QString & /*sourceID*/) {
+    void javaScriptConsoleMessage(QWebEnginePage::JavaScriptConsoleMessageLevel /*level*/, const QString & /*message*/, int /*lineNumber*/, const QString & /*sourceID*/) override {
         //Don't log anything
     }
 public slots:
@@ -113,7 +125,7 @@ class MainWindow : public QMainWindow
     Q_OBJECT
 
 public:
-    MainWindow(ClipGrab* cg, QWidget *parent = 0, Qt::WindowFlags flags = 0);
+    MainWindow(ClipGrab* cg, QWidget *parent = nullptr, Qt::WindowFlags flags = Qt::WindowFlags());
     ~MainWindow();
     void init();
 

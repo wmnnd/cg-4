@@ -22,6 +22,8 @@
 
 
 #include "converter_ffmpeg.h"
+#include <QRegularExpression>
+#include <QRegularExpressionMatch>
 
 void ffmpegThread::run()
 {
@@ -51,30 +53,32 @@ void ffmpegThread::run()
 
 
         ffmpeg = new QProcess(parent);
-        ffmpeg->start(ffmpegCall);
+        ffmpeg->startCommand(ffmpegCall);
         ffmpeg->waitForFinished(-1);
         QString videoInfo = ffmpeg->readAllStandardError();
         ffmpeg->close();
 
-        QRegExp expression;
-        expression = QRegExp("Audio: (.*)\\n");
-        expression.setMinimal(true);
-        if (expression.indexIn(videoInfo) !=-1)
+        QRegularExpression expression;
+        QRegularExpressionMatch match;
+
+        expression = QRegularExpression("Audio: (.*?)\\n");
+        match = expression.match(videoInfo);
+        if (match.hasMatch())
         {
-            audioCodec = expression.cap(1);
+            audioCodec = match.captured(1);
         }
-        expression = QRegExp("Video: (.*)\\n");
-        expression.setMinimal(true);
-        if (expression.indexIn(videoInfo) !=-1)
+        expression = QRegularExpression("Video: (.*?)\\n");
+        match = expression.match(videoInfo);
+        if (match.hasMatch())
         {
-            videoCodec = expression.cap(1);
+            videoCodec = match.captured(1);
         }
 
-        expression = QRegExp("Video:.*([0-9]+) kb/s");
-        expression.setMinimal(true);
-        if (expression.indexIn(videoInfo) !=-1)
+        expression = QRegularExpression("Video:.*?([0-9]+) kb/s");
+        match = expression.match(videoInfo);
+        if (match.hasMatch())
         {
-            videoBitrate = expression.cap(1);
+            videoBitrate = match.captured(1);
         }
 
         qDebug() << "Source video: " << videoCodec << videoBitrate << audioCodec;
@@ -197,7 +201,7 @@ void ffmpegThread::run()
     qDebug() << "Executing ffmpeg: " << ffmpegCall;
 
     ffmpeg = new QProcess(parent);
-    ffmpeg->start(ffmpegCall);
+    ffmpeg->startCommand(ffmpegCall);
     ffmpeg->waitForFinished(-1);
     qDebug() << ffmpeg->readAllStandardError();
     qDebug() << ffmpeg->readAllStandardOutput();
@@ -339,14 +343,14 @@ bool converter_ffmpeg::isAvailable()
         ffmpegPath =  "\"" + QApplication::applicationDirPath() + "/ffmpeg\"";
     #else
 
-        testProcess.start("avconv -v quiet");
+        testProcess.start("avconv", QStringList() << "-v" << "quiet");
         if (testProcess.waitForFinished())
         {
             ffmpegPath = "avconv";
         }
         else
         {
-            testProcess.start("ffmpeg -v quiet");
+            testProcess.start("ffmpeg", QStringList() << "-v" << "quiet");
             if (testProcess.waitForFinished())
             {
                 ffmpegPath = "ffmpeg";
@@ -360,7 +364,7 @@ bool converter_ffmpeg::isAvailable()
         }
     #endif
 
-    testProcess.start(ffmpegPath + " -formats");
+    testProcess.startCommand(ffmpegPath + " -formats");
     testProcess.waitForFinished();
     QString supportedFormats = testProcess.readAllStandardOutput();
 

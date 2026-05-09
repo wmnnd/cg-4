@@ -3,7 +3,7 @@
 
 #include <QObject>
 #include <QWidget>
-#include <QtWebEngineWidgets>
+#include <QWebEngineView>
 
 class CGWebEngineView : public QWebEngineView
 {

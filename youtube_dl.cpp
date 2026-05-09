@@ -13,26 +13,32 @@ QString YoutubeDl::find(bool force) {
 
     // Prefer downloaded youtube-dl
     QString localPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, "yt-dlp");
-    QProcess* process = instance(localPath, QStringList() << "--version");
-    process->start();
-    process->waitForFinished();
-    process->deleteLater();
-    if (process->state() != QProcess::NotRunning) process->kill();
-    if (process->exitCode() == QProcess::ExitStatus::NormalExit) {
-        path = localPath;
-        return path;
+    if (!localPath.isEmpty()) {
+        QProcess* process = instance(localPath, QStringList() << "--version");
+        process->start();
+        process->waitForFinished();
+        if (process->state() != QProcess::NotRunning) process->kill();
+        bool ok = process->exitStatus() == QProcess::NormalExit && process->exitCode() == 0;
+        process->deleteLater();
+        if (ok) {
+            path = localPath;
+            return path;
+        }
     }
 
     // Try system-wide youtube-dlp installation
     QString globalPath = QStandardPaths::findExecutable("yt-dlp");
-    process = instance(globalPath, QStringList() << "--version");
-    process->start();
-    process->waitForFinished();
-    process->deleteLater();
-    if (process->state() != QProcess::NotRunning) process->kill();
-    if (process->exitCode() == QProcess::ExitStatus::NormalExit) {
-        path = globalPath;
-        return path;
+    if (!globalPath.isEmpty()) {
+        QProcess* process = instance(globalPath, QStringList() << "--version");
+        process->start();
+        process->waitForFinished();
+        if (process->state() != QProcess::NotRunning) process->kill();
+        bool ok = process->exitStatus() == QProcess::NormalExit && process->exitCode() == 0;
+        process->deleteLater();
+        if (ok) {
+            path = globalPath;
+            return path;
+        }
     }
 
     return "";

@@ -5,29 +5,40 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
 {
 
     connect(cg, &ClipGrab::downloadEnqueued, this, [=] {
-        video* video = cg->downloads.last();
-        beginInsertRows(QModelIndex(), 0, 1);
+        if (cg->downloads.isEmpty()) return;
+        video* enqueuedVideo = cg->downloads.last();
+        beginInsertRows(QModelIndex(), 0, 0);
         endInsertRows();
 
-        connect(cg->downloads.last(), &video::downloadProgressChanged, [=] {
-            int row = cg->downloads.size() - cg->downloads.indexOf(video) - 1;
-            if (row < cg->downloads.size()) {
+        connect(enqueuedVideo, &video::downloadProgressChanged, this, [=] {
+            int idx = cg->downloads.indexOf(enqueuedVideo);
+            if (idx < 0) return;
+            int row = cg->downloads.size() - idx - 1;
+            if (row >= 0 && row < cg->downloads.size()) {
                 emit dataChanged(createIndex(row, 4), createIndex(row, 4));
             }
         });
 
 
-        connect(cg->downloads.last(), &video::stateChanged, [=] {
-            int row = cg->downloads.size() - cg->downloads.indexOf(video) - 1;
-            if (row < cg->downloads.size()) {
-                emit dataChanged(createIndex(row, 4), createIndex(row, 4));
+        connect(enqueuedVideo, &video::stateChanged, this, [=] {
+            int idx = cg->downloads.indexOf(enqueuedVideo);
+            if (idx < 0) return;
+            int row = cg->downloads.size() - idx - 1;
+            if (row >= 0 && row < cg->downloads.size()) {
+                emit dataChanged(createIndex(row, 0), createIndex(row, 4));
             }
         });
     });
 
-    connect(cg, &ClipGrab::downloadFinished, this, [=](video* finishedVideo) {
-        int row = cg->downloads.size() - cg->downloads.indexOf(finishedVideo) - 1;
+    connect(cg, &ClipGrab::downloadAboutToBeRemoved, this, [=](video* removedVideo) {
+        int idx = cg->downloads.indexOf(removedVideo);
+        if (idx < 0) return;
+        int row = cg->downloads.size() - idx - 1;
+        if (row < 0 || row >= cg->downloads.size()) return;
         beginRemoveRows(QModelIndex(), row, row);
+    });
+
+    connect(cg, &ClipGrab::downloadRemoved, this, [=] {
         endRemoveRows();
     });
 }
@@ -80,7 +91,9 @@ QVariant DownloadListModel::data(const QModelIndex &index, int role) const {
 
     if (role != Qt::DisplayRole) return QVariant();
 
-    video* video = cg->downloads.at(cg->downloads.size() - index.row() -1);
+    int dataIndex = cg->downloads.size() - index.row() - 1;
+    if (dataIndex < 0 || dataIndex >= cg->downloads.size()) return QVariant();
+    video* video = cg->downloads.at(dataIndex);
     switch (index.column()) {
     case 0:
         return video->getPortalName();
@@ -121,6 +134,7 @@ QVariant DownloadListModel::data(const QModelIndex &index, int role) const {
 
 QVariant DownloadListModel::headerData(int section, Qt::Orientation orientation, int role) const {
     if (orientation == Qt::Horizontal && role == Qt::DisplayRole) {
+        if (section < 0 || section >= header.size()) return QVariant();
         return header.at(section);
     }
 
@@ -129,5 +143,7 @@ QVariant DownloadListModel::headerData(int section, Qt::Orientation orientation,
 
 video* DownloadListModel::getVideo(const QModelIndex index) {
     if (!index.isValid()) return nullptr;
-    return cg->downloads.at(cg->downloads.size() - index.row() -1);
+    int dataIndex = cg->downloads.size() - index.row() - 1;
+    if (dataIndex < 0 || dataIndex >= cg->downloads.size()) return nullptr;
+    return cg->downloads.at(dataIndex);
 }

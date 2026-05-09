@@ -23,16 +23,15 @@
 
 #include <QApplication>
 #include <QGuiApplication>
+#include <QCommandLineParser>
+#include <QSettings>
 #include <QTranslator>
+#include <QTimer>
+#include <QLocale>
 #include <QDebug>
 #include "mainwindow.h"
 #include "clipgrab.h"
 #include "video.h"
-
-#define STRINGIZE(x) #x
-#define STRINGIZE_VALUE_OF(x) STRINGIZE(x)
-
-
 
 int main(int argc, char *argv[])
 {
@@ -40,7 +39,7 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationName("ClipGrab");
     QCoreApplication::setOrganizationDomain("clipgrab.org");
     QCoreApplication::setApplicationName("ClipGrab");
-    QCoreApplication::setApplicationVersion(QString(STRINGIZE_VALUE_OF(CLIPGRAB_VERSION)).replace("\"", ""));
+    QCoreApplication::setApplicationVersion(QStringLiteral(CLIPGRAB_VERSION));
 
     QCommandLineParser parser;
     parser.setApplicationDescription("ClipGrab");
@@ -52,9 +51,9 @@ int main(int argc, char *argv[])
 
     QSettings settings;
     if (settings.allKeys().isEmpty()) {
-        static const QChar key[] = {
+        static const char16_t keyChars[] = {
             0x0050, 0x0068, 0x0069, 0x006c, 0x0069, 0x0070, 0x0070, 0x0020, 0x0053, 0x0063, 0x0068, 0x006d, 0x0069, 0x0065, 0x0064, 0x0065, 0x0072};
-        QSettings legacySettings(QString::fromRawData(key, sizeof(key) / sizeof(QChar)), "ClipGrab");
+        QSettings legacySettings(QString::fromUtf16(keyChars, sizeof(keyChars) / sizeof(char16_t)), "ClipGrab");
         QStringList legacyKeys = legacySettings.allKeys();
         QStringList ignoredKeys = {"youtubePlayerUrl", "youtubePlayerJS", "youtubePlayerSignatureMethodName"};
         for (int i = 0; i < legacyKeys.length(); i++) {
@@ -72,8 +71,9 @@ int main(int argc, char *argv[])
     {
         locale = QLocale::system().name();
     }
-    translator.load(QString(":/lng/clipgrab_") + locale);
-    app.installTranslator(&translator);
+    if (translator.load(QString(":/lng/clipgrab_") + locale)) {
+        app.installTranslator(&translator);
+    }
     for (int i=0; i < cg->languages.length(); i++)
     {
         if (cg->languages[i].code == locale) {

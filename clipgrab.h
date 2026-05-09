@@ -30,6 +30,9 @@ along with ClipGrab.  If not, see <http://www.gnu.org/licenses/>.
 #include <QtXml>
 #include <QtDebug>
 #include <QtWidgets>
+#include <QRegularExpression>
+#include <QRegularExpressionMatch>
+#include <QSystemTrayIcon>
 
 #include "video.h"
 #include "converter.h"
@@ -81,20 +84,20 @@ struct updateInfo
 
     static int compare(const updateInfo &a, const updateInfo&b)
     {
-        QRegExp regexp("^(\\d+)\\.(\\d+)\\.(\\d+)(-.*)?$");
-        if (regexp.indexIn(a.version) > -1 && regexp.indexIn((b.version)) > -1)
+        QRegularExpression regexp("^(\\d+)\\.(\\d+)\\.(\\d+)(-.*)?$");
+        QRegularExpressionMatch matchA = regexp.match(a.version);
+        QRegularExpressionMatch matchB = regexp.match(b.version);
+        if (matchA.hasMatch() && matchB.hasMatch())
         {
-            regexp.indexIn(a.version);
-            int majorA = regexp.cap(1).toInt();
-            int minorA = regexp.cap(2).toInt();
-            int patchA = regexp.cap(3).toInt();
-            QString restA = regexp.cap(4);
+            int majorA = matchA.captured(1).toInt();
+            int minorA = matchA.captured(2).toInt();
+            int patchA = matchA.captured(3).toInt();
+            QString restA = matchA.captured(4);
 
-            regexp.indexIn(b.version);
-            int majorB = regexp.cap(1).toInt();
-            int minorB = regexp.cap(2).toInt();
-            int patchB = regexp.cap(3).toInt();
-            QString restB = regexp.cap(4);
+            int majorB = matchB.captured(1).toInt();
+            int minorB = matchB.captured(2).toInt();
+            int patchB = matchB.captured(3).toInt();
+            QString restB = matchB.captured(4);
 
             if (majorA > majorB) return 1;
             if (majorA < majorB) return -1;
@@ -186,6 +189,8 @@ class ClipGrab : public QObject
         void currentVideoStateChanged(video*);
         void downloadEnqueued();
         void downloadFinished(video*);
+        void downloadAboutToBeRemoved(video*);
+        void downloadRemoved();
         void searchFinished(video*);
         void youtubeDlDownloadFinished();
         void compatibleUrlFoundInClipboard(QString url);

@@ -1,21 +1,23 @@
-﻿#Compiling ClipGrab
+#Compiling ClipGrab
 
 Pre-compiled packages for ClipGrab are available on https://clipgrab.org
 But compiling ClipGrab is really easy!
 
 ##Prerequisites
 
-You need to install the Qt5 developer libraries in order to compile the program.
+You need to install the Qt6 developer libraries in order to compile the program.
 
 On Ubuntu and Debian-based system, you can install the necessary libraries like this:
-sudo apt install qtbase5-dev qtwebengine5-dev
+sudo apt install qt6-base-dev qt6-webengine-dev qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools qt6-5compat-dev cmake
 
-Other Linux distributions might have slightly different package names. Packages for Windows and macOS can be downloaded here: https://download.qt.io/archive/qt/5.12/
+Other Linux distributions might have slightly different package names. Packages for Windows and macOS can be downloaded here: https://download.qt.io/
 
 In addition, ffmpeg (no developer libs necessary) needs to be installed.
 
 ##Compiling
-To compile ClipGrab, simply execute the following command:
-qmake clipgrab.pro && make
+To compile ClipGrab, simply execute the following commands:
 
-This will create an executable "clipgrab" that you can start via ./clipgrab.
+cmake -B build
+cmake --build build
+
+This will create an executable "clipgrab" in the build directory that you can start via ./build/clipgrab.

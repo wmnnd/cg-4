@@ -27,6 +27,10 @@ MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
 {
     this->cg = cg;
+    this->changeTabMapper = nullptr;
+    this->downloadMapper = nullptr;
+    this->searchPage = nullptr;
+    this->updatingComboQuality = false;
     ui.setupUi(this);
 }
 
@@ -92,6 +96,7 @@ void MainWindow::init()
         this->ui.downloadComboFormat->addItem(this->cg->formats.at(i)._name);
     }
 
+    if (lastFormat < 0 || lastFormat >= this->cg->formats.size()) lastFormat = 0;
     this->ui.downloadComboFormat->setCurrentIndex(lastFormat);
 
 
@@ -224,22 +229,15 @@ void MainWindow::init()
     //*
     //*Keyboard shortcuts
     //*
-    QSignalMapper* tabShortcutMapper = new QSignalMapper(this);
+    QShortcut* tabShortcutSearch = new QShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_1), this);
+    QShortcut* tabShortcutDownload = new QShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_2), this);
+    QShortcut* tabShortcutSettings = new QShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_3), this);
+    QShortcut* tabShortcutAbout = new QShortcut(QKeySequence(Qt::ControlModifier | Qt::Key_4), this);
 
-    QShortcut* tabShortcutSearch = new QShortcut(QKeySequence(Qt::ControlModifier + Qt::Key_1), this);
-    tabShortcutMapper->setMapping(tabShortcutSearch, 0);
-    QShortcut* tabShortcutDownload = new QShortcut(QKeySequence(Qt::ControlModifier + Qt::Key_2), this);
-    tabShortcutMapper->setMapping(tabShortcutDownload, 1);
-    QShortcut* tabShortcutSettings = new QShortcut(QKeySequence(Qt::ControlModifier + Qt::Key_3), this);
-    tabShortcutMapper->setMapping(tabShortcutSettings, 2);
-    QShortcut* tabShortcutAbout = new QShortcut(QKeySequence(Qt::ControlModifier + Qt::Key_4), this);
-    tabShortcutMapper->setMapping(tabShortcutAbout, 3);
-
-    connect(tabShortcutSearch, SIGNAL(activated()), tabShortcutMapper, SLOT(map()));
-    connect(tabShortcutDownload, SIGNAL(activated()), tabShortcutMapper, SLOT(map()));
-    connect(tabShortcutSettings, SIGNAL(activated()), tabShortcutMapper, SLOT(map()));
-    connect(tabShortcutAbout, SIGNAL(activated()), tabShortcutMapper, SLOT(map()));
-    connect(tabShortcutMapper, SIGNAL(mapped(int)), this->ui.mainTab, SLOT(setCurrentIndex(int)));
+    connect(tabShortcutSearch, &QShortcut::activated, this, [this] { this->ui.mainTab->setCurrentIndex(0); });
+    connect(tabShortcutDownload, &QShortcut::activated, this, [this] { this->ui.mainTab->setCurrentIndex(1); });
+    connect(tabShortcutSettings, &QShortcut::activated, this, [this] { this->ui.mainTab->setCurrentIndex(2); });
+    connect(tabShortcutAbout, &QShortcut::activated, this, [this] { this->ui.mainTab->setCurrentIndex(3); });
 
     //*
     //*Miscellaneous
@@ -289,7 +287,7 @@ void MainWindow::targetFileSelected(video* video, QString target)
 
     if (cg->settings.value("saveLastPath", true).toBool() == true) {
         QString targetDir = target;
-        targetDir.remove(targetDir.split("/", QString::SkipEmptyParts).last()).replace(QRegExp("/+$"), "/");
+        targetDir.remove(targetDir.split("/", Qt::SkipEmptyParts).last()).replace(QRegularExpression("/+$"), "/");
         ui.settingsSavedPath->setText(targetDir);
     }
 
@@ -310,7 +308,9 @@ void MainWindow::targetFileSelected(video* video, QString target)
     }
 
     video->setQuality(ui.downloadComboQuality->currentIndex());
-    video->setConverter(cg->formats.at(ui.downloadComboFormat->currentIndex())._converter, cg->formats.at(ui.downloadComboFormat->currentIndex())._mode);
+    int formatIndex = ui.downloadComboFormat->currentIndex();
+    if (formatIndex < 0 || formatIndex >= cg->formats.size()) return;
+    video->setConverter(cg->formats.at(formatIndex)._converter, cg->formats.at(formatIndex)._mode);
     video->setTargetFilename(target);
     cg->enqueueDownload(video);
     ui.downloadLineEdit->clear();
@@ -682,6 +682,7 @@ void MainWindow::on_mainTab_currentChanged(int index)
 
 void MainWindow::on_settingsLanguage_currentIndexChanged(int index)
 {
+    if (index < 0 || index >= cg->languages.size()) return;
     cg->settings.setValue("Language", cg->languages.at(index).code);
 }
 

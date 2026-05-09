@@ -417,7 +417,7 @@ void video::handleDownloadInfo(QString line) {
 
     re.setPattern("^\\[download\\]\\s+(\\d+\\.\\d)%\\s+of\\s+~?\\s*(\\d+\\.\\d+)(T|G|M|K)iB");
     match = re.match(line);
-    if (match.hasMatch() && !downloadFilenames.isEmpty()) {
+    if (match.hasMatch() && !downloadFilenames.isEmpty() && !downloadSizeEstimates.isEmpty()) {
         qint64 downloadProgress = 0;
         for (int i = 0; i < downloadFilenames.size(); i++) {
             downloadProgress += QFileInfo(downloadFilenames.at(i)).size();

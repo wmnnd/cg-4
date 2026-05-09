@@ -15,11 +15,11 @@ class MessageDialogWebEnginePage : public QWebEnginePage
 {
     Q_OBJECT
 public:
-    MessageDialogWebEnginePage(QWebEngineProfile* profile, QObject* parent = 0) :  QWebEnginePage(profile, parent)
+    MessageDialogWebEnginePage(QWebEngineProfile* profile, QObject* parent = nullptr) :  QWebEnginePage(profile, parent)
     {
         this->setAudioMuted(true);
     }
-    bool acceptNavigationRequest(const QUrl & url, QWebEnginePage::NavigationType type, bool /*isMainFrame*/)
+    bool acceptNavigationRequest(const QUrl & url, QWebEnginePage::NavigationType type, bool /*isMainFrame*/) override
     {
         if (type == QWebEnginePage::NavigationTypeLinkClicked)
         {
@@ -32,7 +32,7 @@ public:
         return false;
     }
 protected:
-    void javaScriptConsoleMessage(QWebEnginePage::JavaScriptConsoleMessageLevel /*level*/, const QString & /*message*/, int /*lineNumber*/, const QString & /*sourceID*/) {
+    void javaScriptConsoleMessage(QWebEnginePage::JavaScriptConsoleMessageLevel /*level*/, const QString & /*message*/, int /*lineNumber*/, const QString & /*sourceID*/) override {
         //Don't log anything
     }
 signals:
@@ -44,7 +44,7 @@ class messageDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit messageDialog(QWidget *parent = 0);
+    explicit messageDialog(QWidget *parent = nullptr);
     ~messageDialog();
     void setUrl(QUrl url);
     void setLinkPolicy(QString);
