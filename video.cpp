@@ -245,12 +245,18 @@ void video::handleInfoJson(QByteArray data) {
     for (int i = 0; i < formats.size(); i++) {
         QJsonObject format = formats.at(i).toObject();
         QString ext = format.value("ext").toString();
+        QString vcodec = format.value("vcodec").toString();
+        QString acodec = format.value("acodec").toString();
         // Annotate every format with its normalized language so later code
         // doesn't have to re-derive it.
         format["language"] = languageOf(format);
-        if (format.value("vcodec").toString() == "none") {
+        if (vcodec == "none" && acodec != "none") {
+            // Real audio-only format. (Skip storyboards / thumbnails, which
+            // also have vcodec == "none" but no acodec; otherwise their empty
+            // language would pollute the language pool and surface as a
+            // spurious "Default" entry in the picker.)
             audioFormats << format;
-        } else if (acceptedVideoExts.contains(ext)) {
+        } else if (vcodec != "none" && acceptedVideoExts.contains(ext)) {
             videoFormats << format;
         }
     }
@@ -372,13 +378,21 @@ void video::handleInfoJson(QByteArray data) {
 
     // Collect the unique audio languages so the UI can offer a language picker.
     // Also build an audioQualities list (one entry per audio language, picking
-    // the highest-bitrate format in that language).
+    // the highest-bitrate format in that language). If at least one audio
+    // format has a real language, drop empty-language entries; the empty
+    // bucket should only survive when nothing has language info at all so the
+    // UI still has *something* to pair video-only formats with.
     QStringList audioLanguages;
+    bool sawNamedAudioLanguage = false;
     for (int i = 0; i < audioFormats.size(); i++) {
         QString lang = audioFormats.at(i).value("language").toString();
+        if (!lang.isEmpty()) sawNamedAudioLanguage = true;
         if (!audioLanguages.contains(lang)) {
             audioLanguages << lang;
         }
+    }
+    if (sawNamedAudioLanguage) {
+        audioLanguages.removeAll(QString());
     }
     audioQualities.clear();
     for (const QString& lang : audioLanguages) {
