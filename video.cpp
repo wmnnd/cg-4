@@ -224,42 +224,22 @@ void video::handleInfoJson(QByteArray data) {
         }
     }
 
-    // This tries to remove YouTube AI translations
-    QStringList languagePreferences = {};
-    if (portal == "youtube") {
-        for(int i = 0; i < audioFormats.length(); i++) {
-            QString formatNote = audioFormats.at(i).value("format_note").toString();
-            if (formatNote.toLower().contains("original")) {
-                QString language = audioFormats.at(i).value("language").toString();
-                if (!languagePreferences.contains(language)) {
-                    languagePreferences << language;
-                    qDebug() << "Adding preferred language" << language << "from" << formatNote;
-                }
-
+    // Detect the "original" audio language (yt-dlp marks it in format_note)
+    originalLanguage.clear();
+    for (int i = 0; i < audioFormats.length(); i++) {
+        QString formatNote = audioFormats.at(i).value("format_note").toString();
+        if (formatNote.toLower().contains("original")) {
+            QString language = audioFormats.at(i).value("language").toString();
+            if (!language.isEmpty()) {
+                originalLanguage = language;
+                qDebug() << "Detected original audio language" << language << "from" << formatNote;
+                break;
             }
-        }
-
-        if (!languagePreferences.empty()) {
-            audioFormats.erase(
-                std::remove_if(audioFormats.begin(), audioFormats.end(), [languagePreferences](QJsonObject format) {
-                    QString language = format.value("language").toString();
-                    return !languagePreferences.contains(language);
-                }),
-                audioFormats.end()
-            );
-
-            videoFormats.erase(
-                std::remove_if(videoFormats.begin(), videoFormats.end(), [languagePreferences](QJsonObject format) {
-                    QString language = format.value("language").toString();
-                    return !language.isEmpty() && !languagePreferences.contains(language);
-                }),
-                videoFormats.end()
-            );
         }
     }
 
-    // Sort audio formats by bitrate and whether they're labelled as "original"
-    std::sort(audioFormats.begin(), audioFormats.end(), [languagePreferences](QJsonObject a, QJsonObject b) {
+    // Sort audio formats by bitrate
+    std::sort(audioFormats.begin(), audioFormats.end(), [](QJsonObject a, QJsonObject b) {
         double tbrA = a.value("tbr").toDouble();
         double tbrB = b.value("tbr").toDouble();
         if (tbrA != tbrB) return tbrA > tbrB;
@@ -272,8 +252,8 @@ void video::handleInfoJson(QByteArray data) {
         return false;
     });
 
-    // Sort audio formats by bitrate and whether they're labelled as "original"
-    std::sort(videoFormats.begin(), videoFormats.end(), [vcodecPreferences, languagePreferences](QJsonObject a, QJsonObject b) {
+    // Sort video formats
+    std::sort(videoFormats.begin(), videoFormats.end(), [vcodecPreferences](QJsonObject a, QJsonObject b) {
         int heightA = a.value("height").toInt();
         int heightB = b.value("height").toInt();
         if (heightA != heightB) return heightA > heightB;
@@ -318,7 +298,8 @@ void video::handleInfoJson(QByteArray data) {
         return false;
     });
 
-    // Remove duplicates
+    // Remove duplicate video formats (keeping language-specific variants since
+    // same resolution may exist for multiple audio languages on combined formats)
     videoFormats.erase(
         std::unique(videoFormats.begin(), videoFormats.end(), [](QJsonObject a, QJsonObject b) {
             int heightA = a.value("height").toInt();
@@ -327,10 +308,44 @@ void video::handleInfoJson(QByteArray data) {
 
             int fpsA = a.value("fps").toInt();
             int fpsB = b.value("fps").toInt();
-            return fpsA == fpsB;
+            if (fpsA != fpsB) return false;
+
+            QString langA = a.value("language").toString();
+            QString langB = b.value("language").toString();
+            return langA == langB;
         }),
         videoFormats.end()
     );
+
+    // Collect the unique audio languages so the UI can offer a language picker.
+    // Also build an audioQualities list (one entry per audio language, picking
+    // the highest-bitrate format in that language).
+    QStringList audioLanguages;
+    for (int i = 0; i < audioFormats.size(); i++) {
+        QString lang = audioFormats.at(i).value("language").toString();
+        if (!audioLanguages.contains(lang)) {
+            audioLanguages << lang;
+        }
+    }
+    audioQualities.clear();
+    for (const QString& lang : audioLanguages) {
+        // audioFormats is already sorted by bitrate desc, so the first match
+        // for each language is the highest quality one.
+        for (int i = 0; i < audioFormats.size(); i++) {
+            if (audioFormats.at(i).value("language").toString() != lang) continue;
+            QJsonObject f = audioFormats.at(i);
+            audioQuality aq;
+            aq.audioFormat = f.value("format_id").toString();
+            aq.audioCodec = f.value("acodec").toString();
+            aq.containerName = f.value("ext").toString();
+            aq.language = lang;
+            aq.audioFileSize = f.value("filesize").toInt();
+            aq.bitrate = f.value("tbr").toDouble();
+            aq.name = QString::number(aq.bitrate) + " kbps";
+            audioQualities << aq;
+            break;
+        }
+    }
 
     for (int i = 0; i < videoFormats.size(); i ++) {
         QJsonObject videoFormat = videoFormats.at(i);
@@ -356,31 +371,56 @@ void video::handleInfoJson(QByteArray data) {
             name.append(" WebM");
         }
 
-        videoQuality quality(name, videoFormat.value("format_id").toString());
-        quality.resolution = height;
-        quality.videoFileSize = videoFormat.value("filesize").toInt();
-        quality.audioFileSize = 0;
-        quality.containerName = videoFormat.value("ext").toString();
+        QString videoLanguage = videoFormat.value("language").toString();
 
-        QList<QJsonObject> compatibleAudioFormats(audioFormats);
         QStringList compatibleAudioExts = {"aac", "m4a", "mp4"};
         if (videoFormat.value("ext") == "webm") {
              compatibleAudioExts.clear();
              compatibleAudioExts << "webm" << "ogg" << "opus";
         }
-        compatibleAudioFormats.erase(std::remove_if(compatibleAudioFormats.begin(), compatibleAudioFormats.end(), [videoFormat, compatibleAudioExts](QJsonObject audioFormat) {
-            QString ext = audioFormat.value("ext").toString();
 
-            return !compatibleAudioExts.contains(ext);
-        }), compatibleAudioFormats.end());
-
-        if (videoFormat.value("acodec") == "none" && compatibleAudioFormats.size() > 0) {
-            int audioIndex = (compatibleAudioFormats.size() -1) * i / videoFormats.size();
-            quality.audioFormat = compatibleAudioFormats.at(audioIndex).value("format_id").toString();
-            quality.audioFileSize = compatibleAudioFormats.at(audioIndex).value("filesize").toInt();
+        // Generate one quality per available audio language (or one with no
+        // audio if there are no audio formats). If the video format itself
+        // declares a language, only pair it with matching audio.
+        QStringList qualityLanguages;
+        if (audioLanguages.isEmpty()) {
+            qualityLanguages << QString();
+        } else {
+            for (const QString& lang : audioLanguages) {
+                if (!videoLanguage.isEmpty() && videoLanguage != lang) continue;
+                qualityLanguages << lang;
+            }
+            // If the video declares a language but no matching audio exists,
+            // fall back to pairing without language constraint so the user
+            // still sees the resolution.
+            if (qualityLanguages.isEmpty()) qualityLanguages << QString();
         }
 
-        qualities << quality;
+        for (const QString& qualityLanguage : qualityLanguages) {
+            videoQuality quality(name, videoFormat.value("format_id").toString());
+            quality.resolution = height;
+            quality.videoFileSize = videoFormat.value("filesize").toInt();
+            quality.audioFileSize = 0;
+            quality.containerName = videoFormat.value("ext").toString();
+            quality.language = qualityLanguage;
+
+            // Find a compatible audio format in this language.
+            QList<QJsonObject> compatibleAudioFormats;
+            for (int j = 0; j < audioFormats.size(); j++) {
+                QJsonObject af = audioFormats.at(j);
+                if (!compatibleAudioExts.contains(af.value("ext").toString())) continue;
+                if (af.value("language").toString() != qualityLanguage) continue;
+                compatibleAudioFormats << af;
+            }
+
+            if (videoFormat.value("acodec") == "none" && compatibleAudioFormats.size() > 0) {
+                int audioIndex = (compatibleAudioFormats.size() -1) * i / qMax(1, videoFormats.size());
+                quality.audioFormat = compatibleAudioFormats.at(audioIndex).value("format_id").toString();
+                quality.audioFileSize = compatibleAudioFormats.at(audioIndex).value("filesize").toInt();
+            }
+
+            qualities << quality;
+        }
     }
 
     state = state::fetched;
@@ -460,7 +500,7 @@ void video::handleDownloadInfo(QString line) {
 }
 
 bool video::setQuality(int index) {
-    if (index >= qualities.size()) return false;
+    if (index < 0 || index >= qualities.size()) return false;
 
     selectedQuality = index;
     return true;
@@ -517,6 +557,32 @@ QString video::getUrl() {
 
 QList<videoQuality> video::getQualities() {
     return qualities;
+}
+
+QList<audioQuality> video::getAudioQualities() {
+    return audioQualities;
+}
+
+QStringList video::getLanguages() {
+    QStringList languages;
+    for (int i = 0; i < qualities.size(); i++) {
+        const QString& lang = qualities.at(i).language;
+        if (!languages.contains(lang)) languages << lang;
+    }
+    for (int i = 0; i < audioQualities.size(); i++) {
+        const QString& lang = audioQualities.at(i).language;
+        if (!languages.contains(lang)) languages << lang;
+    }
+    // If the only "language" present is the empty string, there is no
+    // language info and the UI should hide the language picker.
+    if (languages.size() == 1 && languages.first().isEmpty()) {
+        return QStringList();
+    }
+    return languages;
+}
+
+QString video::getOriginalLanguage() {
+    return originalLanguage;
 }
 
 QString video::getSelectedQualityName() {

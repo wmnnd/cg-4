@@ -31,6 +31,19 @@
 #include "converter.h"
 #include "youtube_dl.h"
 
+struct audioQuality
+{
+    QString name;
+    QString audioFormat;
+    QString audioCodec;
+    QString containerName;
+    QString language;
+    qint64 audioFileSize;
+    int bitrate;
+
+    audioQuality() : audioFileSize(0), bitrate(0) {}
+};
+
 struct videoQuality
 {
     QString name;
@@ -39,6 +52,7 @@ struct videoQuality
     QString videoCodec;
     QString audioCodec;
     QString containerName;
+    QString language;
     qint64 videoFileSize;
     qint64 audioFileSize;
     int resolution;
@@ -85,6 +99,9 @@ public:
     virtual QString getThumbnail();
     virtual qint64 getDuration();
     QList<videoQuality> getQualities();
+    QList<audioQuality> getAudioQualities();
+    QStringList getLanguages();
+    QString getOriginalLanguage();
     virtual QString getSelectedQualityName();
     virtual QString getSafeFilename();
     QString getTargetFilename() {return targetFilename;};
@@ -112,6 +129,8 @@ protected:
     qint64 duration;
     int selectedQuality;
     QList<videoQuality> qualities;
+    QList<audioQuality> audioQualities;
+    QString originalLanguage;
 
     QStringList downloadFilenames;
     qint64 downloadSize;

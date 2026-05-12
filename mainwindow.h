@@ -152,13 +152,18 @@ private:
      void dragEnterEvent(QDragEnterEvent *event);
      void dropEvent(QDropEvent *event);
      bool updatingComboQuality;
+     bool updatingComboLanguage;
      SearchWebEnginePage* searchPage;
      QTimer searchTimer;
      void updateSearch(QString keywords);
      void updateYoutubeDlVersionInfo();
+     void populateLanguageCombo(video* video);
+     void populateQualityCombo(video* video, const QString & language);
+     QString humanLanguageName(const QString & code);
 
 private slots:
     void handleCurrentVideoStateChanged(video*);
+    void on_downloadComboLanguage_currentIndexChanged(int index);
 
     void on_mainTab_currentChanged(int index);
     void on_downloadComboFormat_currentIndexChanged(int index);
