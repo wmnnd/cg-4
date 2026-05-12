@@ -217,17 +217,25 @@ void video::handleInfoJson(QByteArray data) {
     // available track. YouTube typically only ships per-language audio in
     // opus/webm (m4a itag 140 is the single original-language track), so
     // filtering audio by ext at input would hide the language picker.
-    auto languageOf = [](const QJsonObject& format) -> QString {
+    auto normalizeLanguage = [](const QString& lang) -> QString {
+        // "en-US" / "en_US" / "es-419" -> "en" / "es"; "" stays "".
+        if (lang.isEmpty()) return lang;
+        QString primary = lang.section(QRegularExpression("[-_]"), 0, 0);
+        return primary.toLower();
+    };
+    auto languageOf = [&normalizeLanguage](const QJsonObject& format) -> QString {
         // Prefer the top-level "language" field, but fall back to the
         // nested audio_track.id (which yt-dlp populates as a BCP-47-ish
         // code such as "en.4" or "es-419.7"). Different player clients
         // populate one or the other.
         QString lang = format.value("language").toString();
-        if (!lang.isEmpty()) return lang;
-        QJsonObject audioTrack = format.value("audio_track").toObject();
-        QString trackId = audioTrack.value("id").toString();
-        if (!trackId.isEmpty()) return trackId.split('.').value(0);
-        return audioTrack.value("language").toString();
+        if (lang.isEmpty()) {
+            QJsonObject audioTrack = format.value("audio_track").toObject();
+            QString trackId = audioTrack.value("id").toString();
+            if (!trackId.isEmpty()) lang = trackId.split(QChar('.')).value(0);
+            else lang = audioTrack.value("language").toString();
+        }
+        return normalizeLanguage(lang);
     };
     auto isOriginalTrack = [](const QJsonObject& format) -> bool {
         if (format.value("format_note").toString().toLower().contains("original")) return true;
@@ -237,9 +245,10 @@ void video::handleInfoJson(QByteArray data) {
     for (int i = 0; i < formats.size(); i++) {
         QJsonObject format = formats.at(i).toObject();
         QString ext = format.value("ext").toString();
+        // Annotate every format with its normalized language so later code
+        // doesn't have to re-derive it.
+        format["language"] = languageOf(format);
         if (format.value("vcodec").toString() == "none") {
-            // Annotate with the language we resolved so later code can rely on it.
-            format["language"] = languageOf(format);
             audioFormats << format;
         } else if (acceptedVideoExts.contains(ext)) {
             videoFormats << format;
@@ -412,21 +421,27 @@ void video::handleInfoJson(QByteArray data) {
              compatibleAudioExts << "webm" << "ogg" << "opus";
         }
 
-        // Generate one quality per available audio language (or one with no
-        // audio if there are no audio formats). If the video format itself
-        // declares a language, only pair it with matching audio.
+        // Decide which audio languages this video format can be offered for.
+        // Combined formats (acodec != "none") carry their own audio, so their
+        // language is just whatever they declare. Video-only formats need to
+        // be paired with an audio-only track, so they pick up the audio's
+        // language; if the video format itself declares a language they only
+        // pair with matching audio.
+        bool isCombinedFormat = videoFormat.value("acodec").toString() != "none";
         QStringList qualityLanguages;
-        if (audioLanguages.isEmpty()) {
+        if (isCombinedFormat) {
+            qualityLanguages << videoLanguage;
+        } else if (audioLanguages.isEmpty()) {
             qualityLanguages << QString();
+        } else if (videoLanguage.isEmpty()) {
+            qualityLanguages = audioLanguages;
         } else {
             for (const QString& lang : audioLanguages) {
-                if (!videoLanguage.isEmpty() && videoLanguage != lang) continue;
-                qualityLanguages << lang;
+                if (videoLanguage == lang) qualityLanguages << lang;
             }
-            // If the video declares a language but no matching audio exists,
-            // fall back to pairing without language constraint so the user
-            // still sees the resolution.
-            if (qualityLanguages.isEmpty()) qualityLanguages << QString();
+            // Video format declares a language with no matching audio-only
+            // track; skip rather than pair it with the wrong-language audio.
+            if (qualityLanguages.isEmpty()) continue;
         }
 
         for (const QString& qualityLanguage : qualityLanguages) {
@@ -464,6 +479,26 @@ void video::handleInfoJson(QByteArray data) {
             qualities << quality;
         }
     }
+
+    // Dedupe by (resolution, language). When multiple sources exist for the
+    // same resolution+language (e.g. de-DE 144p available as both DASH
+    // video-only+audio-only and combined HLS), prefer the one with a
+    // separate audio format since that's usually higher quality.
+    std::sort(qualities.begin(), qualities.end(), [](const videoQuality& a, const videoQuality& b) {
+        if (a.resolution != b.resolution) return a.resolution > b.resolution;
+        if (a.language != b.language) return a.language < b.language;
+        bool aHasSeparate = !a.audioFormat.isEmpty();
+        bool bHasSeparate = !b.audioFormat.isEmpty();
+        if (aHasSeparate != bHasSeparate) return aHasSeparate;
+        return false;
+    });
+    qualities.erase(
+        std::unique(qualities.begin(), qualities.end(),
+            [](const videoQuality& a, const videoQuality& b) {
+                return a.resolution == b.resolution && a.language == b.language;
+            }),
+        qualities.end()
+    );
 
     state = state::fetched;
 }
