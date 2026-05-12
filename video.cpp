@@ -207,20 +207,23 @@ void video::handleInfoJson(QByteArray data) {
     QJsonArray formats = json.value("formats").toArray();
     QList<QJsonObject> videoFormats;
     QList<QJsonObject> audioFormats;
-    QStringList acceptedExts = {"mp4", "m4a"};
+    QStringList acceptedVideoExts = {"mp4"};
     QStringList vcodecPreferences = {"avc1", "av01"};
     if (QSettings().value("UseWebM", false).toBool()) {
-        acceptedExts << "webm" << "opus";
-        vcodecPreferences.empty();
+        acceptedVideoExts << "webm";
+        vcodecPreferences.clear();
     }
+    // Always accept all audio extensions so language detection sees every
+    // available track. YouTube typically only ships per-language audio in
+    // opus/webm (m4a itag 140 is the single original-language track), so
+    // filtering audio by ext at input would hide the language picker.
     for (int i = 0; i < formats.size(); i++) {
         QJsonObject format = formats.at(i).toObject();
-        if (acceptedExts.contains(format.value("ext").toString())) {
-            if (format.value("vcodec").toString() == "none") {
-                audioFormats << format;
-            } else {
-                videoFormats << format;
-            }
+        QString ext = format.value("ext").toString();
+        if (format.value("vcodec").toString() == "none") {
+            audioFormats << format;
+        } else if (acceptedVideoExts.contains(ext)) {
+            videoFormats << format;
         }
     }
 
@@ -404,14 +407,23 @@ void video::handleInfoJson(QByteArray data) {
             quality.containerName = videoFormat.value("ext").toString();
             quality.language = qualityLanguage;
 
-            // Find a compatible audio format in this language.
-            QList<QJsonObject> compatibleAudioFormats;
+            // Find audio for this language: prefer same-container ext for
+            // a clean remux, but fall back to any audio in that language
+            // (yt-dlp + ffmpeg will mux/transcode as needed). This matters
+            // for YouTube where non-original languages typically only exist
+            // in opus, even when the chosen video is mp4.
+            QList<QJsonObject> sameContainerAudio;
+            QList<QJsonObject> sameLanguageAudio;
             for (int j = 0; j < audioFormats.size(); j++) {
                 QJsonObject af = audioFormats.at(j);
-                if (!compatibleAudioExts.contains(af.value("ext").toString())) continue;
                 if (af.value("language").toString() != qualityLanguage) continue;
-                compatibleAudioFormats << af;
+                sameLanguageAudio << af;
+                if (compatibleAudioExts.contains(af.value("ext").toString())) {
+                    sameContainerAudio << af;
+                }
             }
+            QList<QJsonObject> compatibleAudioFormats =
+                sameContainerAudio.isEmpty() ? sameLanguageAudio : sameContainerAudio;
 
             if (videoFormat.value("acodec") == "none" && compatibleAudioFormats.size() > 0) {
                 int audioIndex = (compatibleAudioFormats.size() -1) * i / qMax(1, videoFormats.size());
