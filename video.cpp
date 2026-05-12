@@ -213,32 +213,62 @@ void video::handleInfoJson(QByteArray data) {
         acceptedVideoExts << "webm";
         vcodecPreferences.clear();
     }
-    // Always accept all audio extensions so language detection sees every
+    // Always accept all audio formats so language detection sees every
     // available track. YouTube typically only ships per-language audio in
     // opus/webm (m4a itag 140 is the single original-language track), so
     // filtering audio by ext at input would hide the language picker.
+    auto languageOf = [](const QJsonObject& format) -> QString {
+        // Prefer the top-level "language" field, but fall back to the
+        // nested audio_track.id (which yt-dlp populates as a BCP-47-ish
+        // code such as "en.4" or "es-419.7"). Different player clients
+        // populate one or the other.
+        QString lang = format.value("language").toString();
+        if (!lang.isEmpty()) return lang;
+        QJsonObject audioTrack = format.value("audio_track").toObject();
+        QString trackId = audioTrack.value("id").toString();
+        if (!trackId.isEmpty()) return trackId.split('.').value(0);
+        return audioTrack.value("language").toString();
+    };
+    auto isOriginalTrack = [](const QJsonObject& format) -> bool {
+        if (format.value("format_note").toString().toLower().contains("original")) return true;
+        QJsonObject audioTrack = format.value("audio_track").toObject();
+        return audioTrack.value("display_name").toString().toLower().contains("original");
+    };
     for (int i = 0; i < formats.size(); i++) {
         QJsonObject format = formats.at(i).toObject();
         QString ext = format.value("ext").toString();
         if (format.value("vcodec").toString() == "none") {
+            // Annotate with the language we resolved so later code can rely on it.
+            format["language"] = languageOf(format);
             audioFormats << format;
         } else if (acceptedVideoExts.contains(ext)) {
             videoFormats << format;
         }
     }
 
-    // Detect the "original" audio language (yt-dlp marks it in format_note)
+    // Detect the "original" audio language (yt-dlp marks it in format_note
+    // and/or audio_track.display_name).
     originalLanguage.clear();
     for (int i = 0; i < audioFormats.length(); i++) {
-        QString formatNote = audioFormats.at(i).value("format_note").toString();
-        if (formatNote.toLower().contains("original")) {
-            QString language = audioFormats.at(i).value("language").toString();
-            if (!language.isEmpty()) {
-                originalLanguage = language;
-                qDebug() << "Detected original audio language" << language << "from" << formatNote;
-                break;
-            }
+        if (!isOriginalTrack(audioFormats.at(i))) continue;
+        QString language = audioFormats.at(i).value("language").toString();
+        if (language.isEmpty()) continue;
+        originalLanguage = language;
+        qDebug() << "Detected original audio language" << language;
+        break;
+    }
+
+    {
+        // Surface what we resolved so users hitting "Default" / single-language
+        // issues can see whether yt-dlp returned per-language tracks at all.
+        QStringList summary;
+        for (int i = 0; i < audioFormats.size(); i++) {
+            QString lang = audioFormats.at(i).value("language").toString();
+            summary << QString("%1[%2]").arg(
+                audioFormats.at(i).value("format_id").toString(),
+                lang.isEmpty() ? QString("-") : lang);
         }
+        qDebug() << "Audio formats from yt-dlp:" << summary.join(", ");
     }
 
     // Sort audio formats by bitrate
