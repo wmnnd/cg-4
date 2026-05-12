@@ -270,14 +270,25 @@ void video::handleInfoJson(QByteArray data) {
     {
         // Surface what we resolved so users hitting "Default" / single-language
         // issues can see whether yt-dlp returned per-language tracks at all.
-        QStringList summary;
+        QStringList audioSummary;
         for (int i = 0; i < audioFormats.size(); i++) {
             QString lang = audioFormats.at(i).value("language").toString();
-            summary << QString("%1[%2]").arg(
+            audioSummary << QString("%1[%2]").arg(
                 audioFormats.at(i).value("format_id").toString(),
                 lang.isEmpty() ? QString("-") : lang);
         }
-        qDebug() << "Audio formats from yt-dlp:" << summary.join(", ");
+        QStringList videoSummary;
+        QStringList videoLangsSeen;
+        for (int i = 0; i < videoFormats.size(); i++) {
+            QString lang = videoFormats.at(i).value("language").toString();
+            QString tag = lang.isEmpty() ? QString("-") : lang;
+            videoSummary << QString("%1[%2]").arg(
+                videoFormats.at(i).value("format_id").toString(), tag);
+            if (!videoLangsSeen.contains(tag)) videoLangsSeen << tag;
+        }
+        qDebug() << "Audio formats from yt-dlp:" << audioSummary.join(", ");
+        qDebug() << "Video formats from yt-dlp:" << videoSummary.join(", ");
+        qDebug() << "Distinct languages on video formats:" << videoLangsSeen.join(", ");
     }
 
     // Sort audio formats by bitrate
@@ -499,6 +510,17 @@ void video::handleInfoJson(QByteArray data) {
             }),
         qualities.end()
     );
+
+    {
+        QStringList finalLangs;
+        for (int i = 0; i < qualities.size(); i++) {
+            QString l = qualities.at(i).language;
+            if (l.isEmpty()) l = "-";
+            if (!finalLangs.contains(l)) finalLangs << l;
+        }
+        qDebug() << "Final quality languages:" << finalLangs.join(", ")
+                 << "(" << qualities.size() << "qualities total)";
+    }
 
     state = state::fetched;
 }
