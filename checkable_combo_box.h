@@ -9,7 +9,7 @@
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
-    
+
     ClipGrab is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -19,26 +19,36 @@
     along with ClipGrab.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+#ifndef CHECKABLE_COMBO_BOX_H
+#define CHECKABLE_COMBO_BOX_H
 
+#include <QComboBox>
+#include <QStandardItemModel>
+#include <QStringList>
 
-#ifndef CONVERTER_COPY_H
-#define CONVERTER_COPY_H
-
-#include "converter.h"
-
-class converter_copy : public converter
+class CheckableComboBox : public QComboBox
 {
-Q_OBJECT
+    Q_OBJECT
 public:
-    converter_copy();
+    explicit CheckableComboBox(QWidget* parent = nullptr);
 
-    converter* createNewInstance();
-    void startConversion(QFile* file, QString& target, QString originalExtension, QString metaTitle, QString metaArtist, int mode);
-    bool isAvailable();
-    bool isAudioOnly(int /*mode*/) {return false;};
-    // Copy mode passes the yt-dlp output through verbatim, so any container
-    // yt-dlp can embed subs into (mp4/mkv/webm/mov/ogg) is preserved as-is.
-    bool supportsSubtitleEmbedding(int /*mode*/) override { return true; }
+    void clearItems();
+    void addCheckableItem(const QString& text, const QString& data);
+    QStringList checkedData() const;
+    void setPlaceholder(const QString& text);
+
+signals:
+    void selectionChanged();
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+    void hidePopup() override;
+
+private:
+    QStandardItemModel* itemModel;
+    QString placeholderText;
+    bool keepPopupOpen;
+    void updateDisplayText();
 };
 
-#endif // CONVERTER_COPY_H
+#endif // CHECKABLE_COMBO_BOX_H

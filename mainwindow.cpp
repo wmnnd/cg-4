@@ -331,6 +331,11 @@ void MainWindow::targetFileSelected(video* video, QString target)
     int formatIndex = ui.downloadComboFormat->currentIndex();
     if (formatIndex < 0 || formatIndex >= cg->formats.size()) return;
     video->setConverter(cg->formats.at(formatIndex)._converter, cg->formats.at(formatIndex)._mode);
+    if (ui.downloadComboSubtitles->isVisible()) {
+        video->setSelectedSubtitles(ui.downloadComboSubtitles->checkedData());
+    } else {
+        video->setSelectedSubtitles(QStringList());
+    }
     video->setTargetFilename(target);
     cg->enqueueDownload(video);
     ui.downloadLineEdit->clear();
@@ -360,6 +365,7 @@ void MainWindow::handleCurrentVideoStateChanged(video* video) {
     ui.downloadInfoBox->setText("<strong>" + video->getTitle() + "</strong>");
 
     populateLanguageCombo(video);
+    populateSubtitleCombo(video);
     QString selectedLanguage;
     if (ui.downloadComboLanguage->isVisible() && ui.downloadComboLanguage->currentIndex() >= 0) {
         selectedLanguage = ui.downloadComboLanguage->currentData().toString();
@@ -433,6 +439,32 @@ void MainWindow::populateQualityCombo(video* video, const QString & language)
         ui.downloadComboQuality->setCurrentIndex(bestResolutionMatchPosition);
     }
     this->updatingComboQuality = false;
+}
+
+void MainWindow::populateSubtitleCombo(video* video)
+{
+    ui.downloadComboSubtitles->clearItems();
+    ui.downloadComboSubtitles->setPlaceholder(tr("None"));
+    QList<subtitle> subs = video ? video->getSubtitles() : QList<subtitle>();
+    for (int i = 0; i < subs.size(); i++) {
+        ui.downloadComboSubtitles->addCheckableItem(subs.at(i).name, subs.at(i).language);
+    }
+    updateSubtitleComboVisibility();
+}
+
+void MainWindow::updateSubtitleComboVisibility()
+{
+    video* current = cg->getCurrentVideo();
+    bool hasSubs = current != nullptr && !current->getSubtitles().isEmpty();
+    bool formatSupports = false;
+    int formatIndex = ui.downloadComboFormat->currentIndex();
+    if (formatIndex >= 0 && formatIndex < cg->formats.size()) {
+        const format & f = cg->formats.at(formatIndex);
+        formatSupports = f._converter && f._converter->supportsSubtitleEmbedding(f._mode);
+    }
+    bool show = hasSubs && formatSupports;
+    ui.downloadLabelSubtitles->setVisible(show);
+    ui.downloadComboSubtitles->setVisible(show);
 }
 
 QString MainWindow::humanLanguageName(const QString & code)
@@ -552,11 +584,13 @@ void MainWindow::disableDownloadUi(bool disable)
 {
     ui.downloadComboFormat->setDisabled(disable);
     ui.downloadComboLanguage->setDisabled(disable);
+    ui.downloadComboSubtitles->setDisabled(disable);
     ui.downloadComboQuality->setDisabled(disable);
     ui.downloadStart->setDisabled(disable);
     ui.label_2->setDisabled(disable);
     ui.label_3->setDisabled(disable);
     ui.downloadLabelLanguage->setDisabled(disable);
+    ui.downloadLabelSubtitles->setDisabled(disable);
 }
 
 void MainWindow::disableDownloadTreeButtons(bool disable)
@@ -769,6 +803,7 @@ void MainWindow::handleSearchResultClicked(const QUrl & url)
 void MainWindow::on_downloadComboFormat_currentIndexChanged(int index)
 {
     cg->settings.setValue("LastFormat", index);
+    updateSubtitleComboVisibility();
 }
 
 void MainWindow::on_mainTab_currentChanged(int index)

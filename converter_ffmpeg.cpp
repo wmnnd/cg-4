@@ -51,6 +51,12 @@ void ffmpegThread::run()
     {
         ffmpegCall.append(" -i \"" + inputFile->fileName() + "\"" );
 
+        // Carry embedded subtitle streams through to the output. Only attached
+        // when we know the target container can hold them; otherwise the
+        // map/codec flags would either be a no-op or break the call.
+        if (embedSubtitles) {
+            ffmpegCall.append(" -map 0:v? -map 0:a? -map 0:s? -c:s mov_text");
+        }
 
         ffmpeg = new QProcess(parent);
         ffmpeg->startCommand(ffmpegCall);
@@ -306,6 +312,7 @@ void converter_ffmpeg::startConversion(QFile* inputFile, QString& target, QStrin
     ffmpeg.metaArtist = metaArtist;
     ffmpeg.target = target;
     ffmpeg.container = container;
+    ffmpeg.embedSubtitles = embedSubtitles && supportsSubtitleEmbedding(mode);
     connect(&ffmpeg, SIGNAL(finished()), this, SLOT(emitFinished()));
     ffmpeg.start();
 

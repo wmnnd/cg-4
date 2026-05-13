@@ -111,6 +111,25 @@ void video::download() {
         arguments << "-f" << quality.videoFormat + "+" + quality.audioFormat;
     }
 
+    // Embed subtitles into the downloaded file when the user has picked any
+    // and the target format is one we know preserves them through our
+    // post-processing pipeline. yt-dlp itself only supports embedding into
+    // mp4/mkv/webm/mov/ogg, so cap the merge container to mp4 when targeting
+    // converter_ffmpeg's MPEG4 mode (otherwise yt-dlp could produce mkv with
+    // webvtt, which our ffmpeg call wouldn't carry forward as mov_text).
+    if (!audioOnly
+            && !selectedSubtitleLanguages.isEmpty()
+            && targetConverter != nullptr
+            && targetConverter->supportsSubtitleEmbedding(targetConverterMode)) {
+        targetConverter->setEmbedSubtitles(true);
+        arguments << "--embed-subs";
+        arguments << "--sub-langs" << selectedSubtitleLanguages.join(",");
+        QString mergeFormat = targetConverter->preferredMergeOutputFormat(targetConverterMode);
+        if (!mergeFormat.isEmpty()) {
+            arguments << "--merge-output-format" << mergeFormat;
+        }
+    }
+
     arguments << url;
 
     startYoutubeDl(arguments);
@@ -203,6 +222,24 @@ void video::handleInfoJson(QByteArray data) {
     if (artist.isEmpty()) artist = json.value("uploader").toString();
 
     duration = json.value("duration").toDouble();
+
+    // Manual (non-auto-generated) subtitles, keyed by language code. Each
+    // value is an array of per-format entries; we only need one entry per
+    // language for the picker, so take the first that carries a "name".
+    subtitles.clear();
+    QJsonObject subtitleMap = json.value("subtitles").toObject();
+    for (const QString& lang : subtitleMap.keys()) {
+        QJsonArray entries = subtitleMap.value(lang).toArray();
+        if (entries.isEmpty()) continue;
+        subtitle s;
+        s.language = lang;
+        for (int i = 0; i < entries.size(); i++) {
+            QString name = entries.at(i).toObject().value("name").toString();
+            if (!name.isEmpty()) { s.name = name; break; }
+        }
+        if (s.name.isEmpty()) s.name = lang;
+        subtitles << s;
+    }
 
     QJsonArray formats = json.value("formats").toArray();
     QList<QJsonObject> videoFormats;
@@ -674,6 +711,14 @@ QList<videoQuality> video::getQualities() {
 
 QList<audioQuality> video::getAudioQualities() {
     return audioQualities;
+}
+
+QList<subtitle> video::getSubtitles() {
+    return subtitles;
+}
+
+void video::setSelectedSubtitles(const QStringList & languages) {
+    selectedSubtitleLanguages = languages;
 }
 
 QStringList video::getLanguages() {

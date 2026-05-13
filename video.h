@@ -44,6 +44,12 @@ struct audioQuality
     audioQuality() : audioFileSize(0), bitrate(0) {}
 };
 
+struct subtitle
+{
+    QString name;
+    QString language;
+};
+
 struct videoQuality
 {
     QString name;
@@ -100,6 +106,8 @@ public:
     virtual qint64 getDuration();
     QList<videoQuality> getQualities();
     QList<audioQuality> getAudioQualities();
+    QList<subtitle> getSubtitles();
+    void setSelectedSubtitles(const QStringList & languages);
     QStringList getLanguages();
     QString getOriginalLanguage();
     virtual QString getSelectedQualityName();
@@ -130,6 +138,8 @@ protected:
     int selectedQuality;
     QList<videoQuality> qualities;
     QList<audioQuality> audioQualities;
+    QList<subtitle> subtitles;
+    QStringList selectedSubtitleLanguages;
     QString originalLanguage;
 
     QStringList downloadFilenames;

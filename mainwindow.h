@@ -158,6 +158,8 @@ private:
      void updateSearch(QString keywords);
      void updateYoutubeDlVersionInfo();
      void populateLanguageCombo(video* video);
+     void populateSubtitleCombo(video* video);
+     void updateSubtitleComboVisibility();
      void populateQualityCombo(video* video, const QString & language);
      QString humanLanguageName(const QString & code);
 

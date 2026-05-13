@@ -14,7 +14,8 @@ QT += xml
 QT += webenginewidgets
 
 # Input
-HEADERS += converter.h \
+HEADERS += checkable_combo_box.h \
+    converter.h \
     converter_copy.h \
     converter_ffmpeg.h \
     download_list_model.h \
@@ -31,7 +32,8 @@ FORMS += metadata-dialog.ui \
     mainwindow.ui \
     update_message.ui \
     message_dialog.ui
-SOURCES += converter.cpp \
+SOURCES += checkable_combo_box.cpp \
+    converter.cpp \
     converter_copy.cpp \
     converter_ffmpeg.cpp \
     download_list_model.cpp \
