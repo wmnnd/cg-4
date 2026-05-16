@@ -5,9 +5,9 @@
 #
 # On Windows: fetches a static ffmpeg build (BtbN) and the embeddable Python
 # distribution from python.org.
-# On macOS:   fetches a static ffmpeg build (evermeet.cx). Python framework
-#             bundling is not implemented yet; the app falls back to system
-#             python3.
+# On macOS:   fetches an Apple Silicon static ffmpeg (Martin Riedl) and a
+#             relocatable Python framework (python-build-standalone). The
+#             macOS build targets arm64 only — Intel macs are not supported.
 # On Linux:   no-op. ClipGrab on Linux uses system ffmpeg and system python3.
 #
 # Each archive is fetched into <EXTERNAL_DIR>/cache/, verified against a
@@ -35,9 +35,10 @@ set(FFMPEG_WIN_URL
 # TODO: pin once verified. First run will print the computed value.
 set(FFMPEG_WIN_SHA256 "")
 
-set(FFMPEG_MAC_VERSION "8.1.1")
+# Martin Riedl publishes per-arch macOS builds with a stable redirect URL
+# for the latest release. evermeet.cx is Intel-only so we don't use it.
 set(FFMPEG_MAC_URL
-    "https://evermeet.cx/ffmpeg/ffmpeg-${FFMPEG_MAC_VERSION}.zip")
+    "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip")
 # TODO: pin once verified. First run will print the computed value.
 set(FFMPEG_MAC_SHA256 "")
 
@@ -52,15 +53,10 @@ set(PYTHON_WIN_SHA256
 # under Contents/Frameworks/Python.framework/Versions/Current/ in the bundle.
 set(PYTHON_MAC_VERSION "3.13.13")
 set(PYTHON_MAC_RELEASE "20260510")
-set(PYTHON_MAC_ARM_URL
+set(PYTHON_MAC_URL
     "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_MAC_RELEASE}/cpython-${PYTHON_MAC_VERSION}+${PYTHON_MAC_RELEASE}-aarch64-apple-darwin-install_only.tar.gz")
 # TODO: pin once verified.
-set(PYTHON_MAC_ARM_SHA256 "")
-set(PYTHON_MAC_X86_URL
-    "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_MAC_RELEASE}/cpython-${PYTHON_MAC_VERSION}+${PYTHON_MAC_RELEASE}-x86_64-apple-darwin-install_only.tar.gz")
-# TODO: pin once verified.
-set(PYTHON_MAC_X86_SHA256 "")
-
+set(PYTHON_MAC_SHA256 "")
 # yt-dlp's YouTube extractor invokes a JS runtime (deno preferred, node
 # fallback) for signature deciphering. Without one in PATH, per-language
 # combined HLS formats disappear from the picker, so we ship deno alongside
@@ -71,11 +67,8 @@ set(DENO_BASE_URL
 set(DENO_WIN_URL    "${DENO_BASE_URL}/deno-x86_64-pc-windows-msvc.zip")
 # TODO: pin once verified. First run will print the computed value.
 set(DENO_WIN_SHA256 "")
-set(DENO_MAC_ARM_URL    "${DENO_BASE_URL}/deno-aarch64-apple-darwin.zip")
-set(DENO_MAC_ARM_SHA256 "e2e63288d11e3f36855b60d77585844cbc5146600cbc7224e2d9276a35378089")
-set(DENO_MAC_X86_URL    "${DENO_BASE_URL}/deno-x86_64-apple-darwin.zip")
-# TODO: pin once verified.
-set(DENO_MAC_X86_SHA256 "")
+set(DENO_MAC_URL    "${DENO_BASE_URL}/deno-aarch64-apple-darwin.zip")
+set(DENO_MAC_SHA256 "e2e63288d11e3f36855b60d77585844cbc5146600cbc7224e2d9276a35378089")
 
 # ---------------------------------------------------------------------------
 # Locations
@@ -187,16 +180,18 @@ if(CMAKE_HOST_WIN32)
     message(STATUS "Staged deno ${DENO_VERSION} at ${EXTERNAL_DIR}/deno-bin/deno.exe")
 
 elseif(CMAKE_HOST_APPLE)
-    message(STATUS "Preparing macOS dependencies in ${EXTERNAL_DIR}")
+    # macOS build targets Apple Silicon only — Intel is not supported. The
+    # arch picks for deno/Python/ffmpeg are hardcoded to arm64 because
+    # CMAKE_HOST_SYSTEM_PROCESSOR is empty in `cmake -P` script mode anyway.
+    message(STATUS "Preparing macOS (arm64) dependencies in ${EXTERNAL_DIR}")
 
     fetch_archive(
-        NAME    "ffmpeg-${FFMPEG_MAC_VERSION}-macos.zip"
+        NAME    "ffmpeg-macos-arm64.zip"
         URL     "${FFMPEG_MAC_URL}"
         SHA256  "${FFMPEG_MAC_SHA256}"
         DESTINATION "${EXTERNAL_DIR}/ffmpeg-extracted")
 
-    # evermeet.cx ships a single executable in the zip. Stage it the same
-    # way as on Windows.
+    # The zip contains a single `ffmpeg` binary at the root.
     file(GLOB_RECURSE found_ffmpeg "${EXTERNAL_DIR}/ffmpeg-extracted/ffmpeg")
     if(NOT found_ffmpeg)
         message(FATAL_ERROR
@@ -212,21 +207,10 @@ elseif(CMAKE_HOST_APPLE)
                          WORLD_READ WORLD_EXECUTE)
     message(STATUS "Staged ffmpeg at ${EXTERNAL_DIR}/ffmpeg-bin/ffmpeg")
 
-    # Pick the deno binary that matches the host architecture. macos-latest
-    # GHA runners are Apple Silicon; the x86_64 fallback covers Intel macs.
-    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(deno_url    "${DENO_MAC_ARM_URL}")
-        set(deno_sha256 "${DENO_MAC_ARM_SHA256}")
-        set(deno_arch   "aarch64")
-    else()
-        set(deno_url    "${DENO_MAC_X86_URL}")
-        set(deno_sha256 "${DENO_MAC_X86_SHA256}")
-        set(deno_arch   "x86_64")
-    endif()
     fetch_archive(
-        NAME    "deno-${DENO_VERSION}-macos-${deno_arch}.zip"
-        URL     "${deno_url}"
-        SHA256  "${deno_sha256}"
+        NAME    "deno-${DENO_VERSION}-macos-arm64.zip"
+        URL     "${DENO_MAC_URL}"
+        SHA256  "${DENO_MAC_SHA256}"
         DESTINATION "${EXTERNAL_DIR}/deno-extracted")
     file(GLOB found_deno "${EXTERNAL_DIR}/deno-extracted/deno")
     if(NOT found_deno)
@@ -240,20 +224,12 @@ elseif(CMAKE_HOST_APPLE)
         FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
                          GROUP_READ GROUP_EXECUTE
                          WORLD_READ WORLD_EXECUTE)
-    message(STATUS "Staged deno (${deno_arch}) at ${EXTERNAL_DIR}/deno-bin/deno")
+    message(STATUS "Staged deno at ${EXTERNAL_DIR}/deno-bin/deno")
 
-    # Python (python-build-standalone install_only tarball, host arch).
-    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-        set(py_url    "${PYTHON_MAC_ARM_URL}")
-        set(py_sha256 "${PYTHON_MAC_ARM_SHA256}")
-    else()
-        set(py_url    "${PYTHON_MAC_X86_URL}")
-        set(py_sha256 "${PYTHON_MAC_X86_SHA256}")
-    endif()
     fetch_archive(
-        NAME    "python-${PYTHON_MAC_VERSION}-${PYTHON_MAC_RELEASE}-macos.tar.gz"
-        URL     "${py_url}"
-        SHA256  "${py_sha256}"
+        NAME    "python-${PYTHON_MAC_VERSION}-${PYTHON_MAC_RELEASE}-macos-arm64.tar.gz"
+        URL     "${PYTHON_MAC_URL}"
+        SHA256  "${PYTHON_MAC_SHA256}"
         DESTINATION "${EXTERNAL_DIR}/python-mac")
     # The tarball top-level is `python/`; expose a stable path the CI workflow
     # can splice into Contents/Frameworks/Python.framework/Versions/Current/.

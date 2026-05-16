@@ -64,7 +64,14 @@ jobs:
         run: cmake -P cmake/PrepareDependencies.cmake
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        shell: bash
+        run: |
+          extra=()
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            # ClipGrab.app targets Apple Silicon only.
+            extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+          fi
+          cmake -B build -DCMAKE_BUILD_TYPE=Release "${extra[@]}"
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -78,10 +85,15 @@ jobs:
       - name: Stage bundle (macOS)
         if: runner.os == 'macOS'
         run: |
-          mkdir -p stage
-          cp -R build/ClipGrab.app stage/
+          mkdir -p stage_universal
+          cp -R build/ClipGrab.app stage_universal/
           # Pull Qt frameworks (incl. WebEngine helpers) into the bundle.
-          macdeployqt stage/ClipGrab.app -verbose=1
+          # The Qt 6 macOS binaries are universal2 (arm64 + x86_64).
+          macdeployqt stage_universal/ClipGrab.app -verbose=1
+          # ditto preserves bundle structure but strips x86_64 slices from
+          # every Mach-O file it walks, leaving an arm64-only .app.
+          mkdir -p stage
+          ditto --arch arm64 stage_universal/ClipGrab.app stage/ClipGrab.app
           cp external/ffmpeg-bin/ffmpeg stage/ClipGrab.app/Contents/MacOS/
           cp external/deno-bin/deno   stage/ClipGrab.app/Contents/MacOS/
           chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg \
@@ -91,6 +103,11 @@ jobs:
           PY_DEST=stage/ClipGrab.app/Contents/Frameworks/Python.framework/Versions/Current
           mkdir -p "$PY_DEST"
           cp -R external/python-mac/python/. "$PY_DEST/"
+          # Sanity check: every Mach-O at the surface should be arm64-only.
+          file stage/ClipGrab.app/Contents/MacOS/ClipGrab \
+               stage/ClipGrab.app/Contents/MacOS/ffmpeg \
+               stage/ClipGrab.app/Contents/MacOS/deno \
+               stage/ClipGrab.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3
 
       - name: Stage bundle (Windows)
         if: runner.os == 'Windows'
