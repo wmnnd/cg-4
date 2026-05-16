@@ -80,6 +80,8 @@ jobs:
         run: |
           mkdir -p stage
           cp -R build/ClipGrab.app stage/
+          # Pull Qt frameworks (incl. WebEngine helpers) into the bundle.
+          macdeployqt stage/ClipGrab.app -verbose=1
           cp external/ffmpeg-bin/ffmpeg stage/ClipGrab.app/Contents/MacOS/
           cp external/deno-bin/deno   stage/ClipGrab.app/Contents/MacOS/
           chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg \
@@ -99,6 +101,8 @@ jobs:
           $exe = Get-ChildItem -Path build -Filter clipgrab.exe -Recurse | Select-Object -First 1
           if (-not $exe) { throw "clipgrab.exe not found in build/" }
           Copy-Item $exe.FullName stage/clipgrab/
+          # Pull Qt DLLs + plugins next to the staged exe.
+          windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw stage/clipgrab/clipgrab.exe
           Copy-Item external/ffmpeg-bin/ffmpeg.exe stage/clipgrab/
           Copy-Item external/deno-bin/deno.exe   stage/clipgrab/
           Copy-Item -Recurse external/python stage/clipgrab/python
