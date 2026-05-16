@@ -32,8 +32,8 @@ cmake_minimum_required(VERSION 3.20)
 # clear the SHA, rerun once, and re-pin to the new value.
 set(FFMPEG_WIN_URL
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip")
-set(FFMPEG_WIN_SHA256
-    "853e0cc1a6d48598851b88a6a3cd6f0bf43b84c260476d864244f212ce04b1f0")
+# TODO: pin once verified. First run will print the computed value.
+set(FFMPEG_WIN_SHA256 "")
 
 set(FFMPEG_MAC_VERSION "8.1.1")
 set(FFMPEG_MAC_URL
@@ -46,6 +46,20 @@ set(PYTHON_WIN_URL
     "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip")
 set(PYTHON_WIN_SHA256
     "76f238f606250c87c6beac75dccd35ee99070a13490555936abb6cb64ecce3d0")
+
+# macOS Python from astral-sh/python-build-standalone (relocatable builds).
+# The install_only tarball extracts to a `python/` directory which we stage
+# under Contents/Frameworks/Python.framework/Versions/Current/ in the bundle.
+set(PYTHON_MAC_VERSION "3.13.13")
+set(PYTHON_MAC_RELEASE "20260510")
+set(PYTHON_MAC_ARM_URL
+    "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_MAC_RELEASE}/cpython-${PYTHON_MAC_VERSION}+${PYTHON_MAC_RELEASE}-aarch64-apple-darwin-install_only.tar.gz")
+# TODO: pin once verified.
+set(PYTHON_MAC_ARM_SHA256 "")
+set(PYTHON_MAC_X86_URL
+    "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_MAC_RELEASE}/cpython-${PYTHON_MAC_VERSION}+${PYTHON_MAC_RELEASE}-x86_64-apple-darwin-install_only.tar.gz")
+# TODO: pin once verified.
+set(PYTHON_MAC_X86_SHA256 "")
 
 # yt-dlp's YouTube extractor invokes a JS runtime (deno preferred, node
 # fallback) for signature deciphering. Without one in PATH, per-language
@@ -228,9 +242,26 @@ elseif(CMAKE_HOST_APPLE)
                          WORLD_READ WORLD_EXECUTE)
     message(STATUS "Staged deno (${deno_arch}) at ${EXTERNAL_DIR}/deno-bin/deno")
 
-    # TODO: bundle Python on macOS via astral-sh/python-build-standalone.
-    # The app already falls back to system python3, so this is non-blocking
-    # for the PoC.
+    # Python (python-build-standalone install_only tarball, host arch).
+    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(py_url    "${PYTHON_MAC_ARM_URL}")
+        set(py_sha256 "${PYTHON_MAC_ARM_SHA256}")
+    else()
+        set(py_url    "${PYTHON_MAC_X86_URL}")
+        set(py_sha256 "${PYTHON_MAC_X86_SHA256}")
+    endif()
+    fetch_archive(
+        NAME    "python-${PYTHON_MAC_VERSION}-${PYTHON_MAC_RELEASE}-macos.tar.gz"
+        URL     "${py_url}"
+        SHA256  "${py_sha256}"
+        DESTINATION "${EXTERNAL_DIR}/python-mac")
+    # The tarball top-level is `python/`; expose a stable path the CI workflow
+    # can splice into Contents/Frameworks/Python.framework/Versions/Current/.
+    if(NOT EXISTS "${EXTERNAL_DIR}/python-mac/python/bin/python3")
+        message(FATAL_ERROR
+            "Expected ${EXTERNAL_DIR}/python-mac/python/bin/python3 after extract")
+    endif()
+    message(STATUS "Staged Python ${PYTHON_MAC_VERSION} at ${EXTERNAL_DIR}/python-mac/python")
 
 elseif(CMAKE_HOST_UNIX)
     message(STATUS "Linux build: no bundled runtime dependencies "

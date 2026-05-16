@@ -17,7 +17,6 @@ jobs:
         include:
           - name: linux
             os: ubuntu-latest
-            qt_arch: gcc_64
           - name: macos
             os: macos-latest
             qt_arch: clang_64
@@ -28,30 +27,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt
+      - name: Install Linux build deps (Qt6 from apt)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            qt6-base-dev \
+            qt6-base-private-dev \
+            qt6-tools-dev \
+            qt6-tools-dev-tools \
+            qt6-l10n-tools \
+            qt6-webengine-dev \
+            qt6-webengine-dev-tools \
+            libqt6core5compat6-dev \
+            libqt6webenginecore6-bin \
+            libxkbcommon-dev \
+            libnss3
+
+      - name: Install Qt (macOS / Windows)
+        if: runner.os != 'Linux'
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.9.0'
           arch: ${{ matrix.qt_arch }}
           modules: 'qtwebengine qtwebchannel qtpositioning qt5compat'
           cache: true
-
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            ninja-build \
-            libxkbcommon-x11-0 \
-            libxkbcommon-dev \
-            libxcb-cursor0 \
-            libxcb-icccm4 \
-            libxcb-image0 \
-            libxcb-keysyms1 \
-            libxcb-randr0 \
-            libxcb-render-util0 \
-            libxcb-shape0 \
-            libnss3
 
       - name: Cache external dependencies
         uses: actions/cache@v4
@@ -83,6 +84,11 @@ jobs:
           cp external/deno-bin/deno   stage/ClipGrab.app/Contents/MacOS/
           chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg \
                    stage/ClipGrab.app/Contents/MacOS/deno
+          # Splice python-build-standalone into the bundle. The app spawns
+          # Contents/Frameworks/Python.framework/Versions/Current/bin/python3.
+          PY_DEST=stage/ClipGrab.app/Contents/Frameworks/Python.framework/Versions/Current
+          mkdir -p "$PY_DEST"
+          cp -R external/python-mac/python/. "$PY_DEST/"
 
       - name: Stage bundle (Windows)
         if: runner.os == 'Windows'
