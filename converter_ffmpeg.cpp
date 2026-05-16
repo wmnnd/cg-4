@@ -22,8 +22,15 @@
 
 
 #include "converter_ffmpeg.h"
+
+#include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QProcess>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
+#include <QSettings>
+#include <QDebug>
 
 void ffmpegThread::run()
 {

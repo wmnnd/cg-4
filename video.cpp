@@ -23,6 +23,25 @@
 
 #include "video.h"
 
+#include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QRegularExpression>
+#include <QRegularExpressionMatch>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QUrl>
+#include <QUrlQuery>
+
+#include <algorithm>
+#include <cmath>
+
+#include "youtube_dl.h"
+
 video::video() {
     selectedQuality = -1;
     state = state::empty;

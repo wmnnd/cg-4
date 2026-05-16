@@ -25,8 +25,11 @@
 #define CONVERTER_FFMPEG_H
 
 #include "converter.h"
-#include <QSysInfo>
-#include <QApplication>
+
+#include <QStringList>
+#include <QThread>
+
+class QProcess;
 
 class ffmpegThread : public QThread
 {

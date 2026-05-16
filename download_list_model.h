@@ -1,15 +1,15 @@
 #ifndef DOWNLOADLISTMODEL_H
 #define DOWNLOADLISTMODEL_H
 
-#include <QObject>
-#include <QWidget>
 #include <QAbstractItemModel>
-#include <video.h>
-
-
+#include <QList>
+#include <QObject>
+#include <QString>
 #include <QVariant>
 #include <QVector>
+
 #include "clipgrab.h"
+#include "video.h"
 
 
 class DownloadListModel : public QAbstractItemModel {

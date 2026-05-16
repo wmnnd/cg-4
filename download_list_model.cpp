@@ -1,5 +1,7 @@
 #include "download_list_model.h"
 
+#include <QSize>
+
 DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
     : QAbstractItemModel(parent), cg(cg)
 {

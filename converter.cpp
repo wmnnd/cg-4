@@ -21,7 +21,6 @@
 
 
 
-#include <QtGui>
 #include "converter.h"
 
 converter::converter()

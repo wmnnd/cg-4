@@ -1,5 +1,15 @@
 #include "youtube_dl.h"
 
+#include <QCoreApplication>
+#include <QDebug>
+#include <QDir>
+#include <QFile>
+#include <QProcess>
+#include <QProcessEnvironment>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QUrl>
+
 YoutubeDl::YoutubeDl()
 {
 

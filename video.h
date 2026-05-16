@@ -24,12 +24,14 @@
 #ifndef VIDEO_H
 #define VIDEO_H
 
-#include <QtGui>
-#include <QtNetwork>
-#include <QtWidgets>
-#include <QDebug>
+#include <QByteArray>
+#include <QList>
+#include <QObject>
+#include <QProcess>
+#include <QString>
+#include <QStringList>
+
 #include "converter.h"
-#include "youtube_dl.h"
 
 struct videoQuality
 {

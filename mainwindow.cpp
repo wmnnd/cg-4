@@ -23,6 +23,35 @@
 
 #include "mainwindow.h"
 
+#include <QApplication>
+#include <QClipboard>
+#include <QCloseEvent>
+#include <QCoreApplication>
+#include <QDesktopServices>
+#include <QDir>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFontDatabase>
+#include <QHeaderView>
+#include <QItemSelectionModel>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMessageBox>
+#include <QMimeData>
+#include <QShortcut>
+#include <QStandardPaths>
+#include <QTimerEvent>
+#include <QTreeView>
+#include <QWebEngineSettings>
+#include <QWebEngineView>
+#include <QDebug>
+
+#include "notifications.h"
+#include "youtube_dl.h"
+
 MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
 {

@@ -1,8 +1,10 @@
 #ifndef YOUTUBEDL_H
 #define YOUTUBEDL_H
 
-#include <QtCore>
-#include <QDebug>
+#include <QString>
+#include <QStringList>
+
+class QProcess;
 
 class YoutubeDl
 {

@@ -25,24 +25,30 @@
 #define MAINWINDOW_H
 
 #include <QMainWindow>
-#include <QSignalMapper>
-#include <QtXml>
+#include <QModelIndex>
+#include <QRegularExpression>
+#include <QString>
+#include <QSystemTrayIcon>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
-#include <QWebEngineView>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
-#include <QWebEngineSettings>
-#include <QWebEngineUrlRequestInterceptor>
 #include <QWebEngineUrlRequestInfo>
-#include <QFontDatabase>
-#include <QRegularExpression>
+#include <QWebEngineUrlRequestInterceptor>
+
 #include "ui_mainwindow.h"
 #include "ui_metadata-dialog.h"
 #include "clipgrab.h"
-#include "video.h"
-#include "notifications.h"
 #include "download_list_model.h"
+
+class QCloseEvent;
+class QDialog;
+class QDragEnterEvent;
+class QDropEvent;
+class QEvent;
+class QSignalMapper;
+class QTimerEvent;
 
 
 class SearchWebEngineUrlRequestInterceptor : public QWebEngineUrlRequestInterceptor

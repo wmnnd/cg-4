@@ -23,6 +23,8 @@
 
 #include "notifications.h"
 
+#include <QSystemTrayIcon>
+
 void Notifications::showMessage(QString title, QString message, QSystemTrayIcon *systemTrayIcon)
 {
     systemTrayIcon->showMessage(title, message);

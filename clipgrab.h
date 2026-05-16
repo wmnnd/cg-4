@@ -24,24 +24,28 @@ along with ClipGrab.  If not, see <http://www.gnu.org/licenses/>.
 #ifndef CLIPGRAB_H
 #define CLIPGRAB_H
 
-#include <QApplication>
-#include <QtGui>
-#include <QtNetwork>
-#include <QtXml>
-#include <QtDebug>
-#include <QtWidgets>
+#include <QDomNodeList>
+#include <QList>
+#include <QObject>
+#include <QPair>
 #include <QRegularExpression>
 #include <QRegularExpressionMatch>
+#include <QSettings>
+#include <QString>
 #include <QSystemTrayIcon>
 
 #include "video.h"
 #include "converter.h"
-#include "converter_copy.h"
-#include "converter_ffmpeg.h"
 
 #include "ui_update_message.h"
 #include "ui_helper_downloader.h"
-#include "message_dialog.h"
+
+class QClipboard;
+class QDialog;
+class QFile;
+class QNetworkReply;
+class QProcess;
+class QTemporaryFile;
 
 struct format
 {

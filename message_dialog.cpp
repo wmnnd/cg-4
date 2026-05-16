@@ -1,6 +1,8 @@
 #include "message_dialog.h"
 #include "ui_message_dialog.h"
 
+#include <QDesktopServices>
+
 messageDialog::messageDialog(QWidget *parent) :
     QDialog(parent),
     ui(new Ui::messageDialog)

@@ -21,7 +21,42 @@
 
 
 #include "clipgrab.h"
+
+#include <QApplication>
+#include <QClipboard>
+#include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDesktopServices>
+#include <QDir>
+#include <QDomDocument>
+#include <QDomElement>
+#include <QFile>
+#include <QFileInfo>
+#include <QLocale>
+#include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkProxy>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QPushButton>
+#include <QSslCertificate>
+#include <QSslConfiguration>
+#include <QSslError>
+#include <QStandardPaths>
+#include <QTemporaryFile>
+#include <QUrl>
+#include <QUrlQuery>
+#include <QWebEnginePage>
+#include <QWebEngineProfile>
+#include <QDebug>
+
 #include <algorithm>
+#include <cmath>
+
+#include "converter_copy.h"
+#include "converter_ffmpeg.h"
+#include "message_dialog.h"
+#include "youtube_dl.h"
 
 ClipGrab::ClipGrab()
 {

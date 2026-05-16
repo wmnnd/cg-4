@@ -24,8 +24,11 @@
 #ifndef CONVERTER_H
 #define CONVERTER_H
 
+#include <QList>
 #include <QObject>
-#include <QtGui>
+#include <QString>
+
+class QFile;
 
 class converter : public QObject
 {

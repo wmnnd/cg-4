@@ -21,11 +21,12 @@
 
 
 
-#ifndef FOO_H
-#define FOO_H
+#ifndef NOTIFICATIONS_H
+#define NOTIFICATIONS_H
 
-#include <QtGui>
-#include <QtWidgets>
+#include <QString>
+
+class QSystemTrayIcon;
 
 class Notifications {
 public:

@@ -23,6 +23,9 @@
 
 #include "converter_copy.h"
 
+#include <QDir>
+#include <QFile>
+
 converter_copy::converter_copy()
 {
     this->_modes.append(tr("Original"));

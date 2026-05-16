@@ -2,7 +2,7 @@
 #define MESSAGE_DIALOG_H
 
 #include <QDialog>
-#include <QDesktopServices>
+#include <QString>
 #include <QUrl>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>
