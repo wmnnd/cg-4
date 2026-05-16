@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - claude/port-qt6-fixes-Ugexd
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            qt_arch: gcc_64
+          - name: macos
+            os: macos-latest
+            qt_arch: clang_64
+          - name: windows
+            os: windows-latest
+            qt_arch: win64_msvc2022_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.0'
+          arch: ${{ matrix.qt_arch }}
+          modules: 'qtwebengine qtwebchannel qtpositioning qt5compat'
+          cache: true
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            libxkbcommon-x11-0 \
+            libxkbcommon-dev \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libnss3
+
+      - name: Cache external dependencies
+        uses: actions/cache@v4
+        with:
+          path: external/cache
+          key: ${{ runner.os }}-deps-${{ hashFiles('cmake/PrepareDependencies.cmake') }}
+
+      - name: Prepare dependencies
+        run: cmake -P cmake/PrepareDependencies.cmake
+
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage bundle (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p stage/clipgrab
+          cp build/clipgrab stage/clipgrab/
+
+      - name: Stage bundle (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p stage
+          cp -R build/ClipGrab.app stage/
+          cp external/ffmpeg-bin/ffmpeg stage/ClipGrab.app/Contents/MacOS/
+          chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg
+
+      - name: Stage bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage/clipgrab | Out-Null
+          # Find clipgrab.exe (CMake/MSVC may put it under build/Release or build/)
+          $exe = Get-ChildItem -Path build -Filter clipgrab.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "clipgrab.exe not found in build/" }
+          Copy-Item $exe.FullName stage/clipgrab/
+          Copy-Item external/ffmpeg-bin/ffmpeg.exe stage/clipgrab/
+          Copy-Item -Recurse external/python stage/clipgrab/python
+
+      - name: Zip bundle
+        shell: bash
+        run: |
+          cd stage
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            zip -ry "../clipgrab-${{ matrix.name }}.zip" ClipGrab.app
+          else
+            zip -r "../clipgrab-${{ matrix.name }}.zip" clipgrab
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipgrab-${{ matrix.name }}
+          path: clipgrab-${{ matrix.name }}.zip
+          if-no-files-found: error
