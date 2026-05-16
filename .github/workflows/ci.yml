@@ -103,6 +103,22 @@ jobs:
           PY_DEST=stage/ClipGrab.app/Contents/Frameworks/Python.framework/Versions/Current
           mkdir -p "$PY_DEST"
           cp -R external/python-mac/python/. "$PY_DEST/"
+
+          # --- Trim things ClipGrab/yt-dlp never use ------------------------
+          # Python stdlib: drop dev tooling, GUI bindings, examples, tests.
+          PY_LIB="$PY_DEST/lib/python3.13"
+          rm -rf "$PY_LIB/test" "$PY_LIB/idlelib" "$PY_LIB/tkinter" \
+                 "$PY_LIB/turtledemo" "$PY_LIB/ensurepip" \
+                 "$PY_DEST/include" "$PY_DEST/share"
+          # WebEngine DevTools resources (we don't expose the inspector).
+          WE_RES="stage/ClipGrab.app/Contents/Frameworks/QtWebEngineCore.framework/Resources"
+          rm -f "$WE_RES/qtwebengine_devtools_resources.pak"
+          # Strip debug symbols from the staged Mach-O binaries. xargs because
+          # `find -exec strip {} +` is slower and bails on the first oddity.
+          find stage/ClipGrab.app -type f \( -name '*.dylib' -o -name '*.so' \) \
+            -print0 | xargs -0 strip -x || true
+          strip -x stage/ClipGrab.app/Contents/MacOS/ClipGrab || true
+
           # Sanity check: every Mach-O at the surface should be arm64-only.
           file stage/ClipGrab.app/Contents/MacOS/ClipGrab \
                stage/ClipGrab.app/Contents/MacOS/ffmpeg \
@@ -123,6 +139,14 @@ jobs:
           Copy-Item external/ffmpeg-bin/ffmpeg.exe stage/clipgrab/
           Copy-Item external/deno-bin/deno.exe   stage/clipgrab/
           Copy-Item -Recurse external/python stage/clipgrab/python
+
+          # --- Trim things ClipGrab/yt-dlp never use ------------------------
+          # The python.org embeddable distribution is already lean (stdlib
+          # lives in a zip), so just drop the redundant CLI helpers.
+          Remove-Item -Force stage/clipgrab/python/pythonw.exe -ErrorAction SilentlyContinue
+          # WebEngine DevTools resources (we don't expose the inspector).
+          Get-ChildItem -Recurse -Filter qtwebengine_devtools_resources.pak stage/clipgrab |
+              Remove-Item -Force -ErrorAction SilentlyContinue
 
       - name: Zip bundle (Linux/macOS)
         if: runner.os != 'Windows'
