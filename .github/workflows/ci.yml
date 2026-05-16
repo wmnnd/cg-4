@@ -80,7 +80,9 @@ jobs:
           mkdir -p stage
           cp -R build/ClipGrab.app stage/
           cp external/ffmpeg-bin/ffmpeg stage/ClipGrab.app/Contents/MacOS/
-          chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg
+          cp external/deno-bin/deno   stage/ClipGrab.app/Contents/MacOS/
+          chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg \
+                   stage/ClipGrab.app/Contents/MacOS/deno
 
       - name: Stage bundle (Windows)
         if: runner.os == 'Windows'
@@ -92,6 +94,7 @@ jobs:
           if (-not $exe) { throw "clipgrab.exe not found in build/" }
           Copy-Item $exe.FullName stage/clipgrab/
           Copy-Item external/ffmpeg-bin/ffmpeg.exe stage/clipgrab/
+          Copy-Item external/deno-bin/deno.exe   stage/clipgrab/
           Copy-Item -Recurse external/python stage/clipgrab/python
 
       - name: Zip bundle

@@ -47,6 +47,22 @@ set(PYTHON_WIN_URL
 set(PYTHON_WIN_SHA256
     "76f238f606250c87c6beac75dccd35ee99070a13490555936abb6cb64ecce3d0")
 
+# yt-dlp's YouTube extractor invokes a JS runtime (deno preferred, node
+# fallback) for signature deciphering. Without one in PATH, per-language
+# combined HLS formats disappear from the picker, so we ship deno alongside
+# the app on Windows and macOS. Linux relies on whatever the user has.
+set(DENO_VERSION "2.7.13")
+set(DENO_BASE_URL
+    "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}")
+set(DENO_WIN_URL    "${DENO_BASE_URL}/deno-x86_64-pc-windows-msvc.zip")
+# TODO: pin once verified. First run will print the computed value.
+set(DENO_WIN_SHA256 "")
+set(DENO_MAC_ARM_URL    "${DENO_BASE_URL}/deno-aarch64-apple-darwin.zip")
+set(DENO_MAC_ARM_SHA256 "e2e63288d11e3f36855b60d77585844cbc5146600cbc7224e2d9276a35378089")
+set(DENO_MAC_X86_URL    "${DENO_BASE_URL}/deno-x86_64-apple-darwin.zip")
+# TODO: pin once verified.
+set(DENO_MAC_X86_SHA256 "")
+
 # ---------------------------------------------------------------------------
 # Locations
 # ---------------------------------------------------------------------------
@@ -149,6 +165,13 @@ if(CMAKE_HOST_WIN32)
         DESTINATION "${EXTERNAL_DIR}/python")
     message(STATUS "Staged Python ${PYTHON_VERSION} at ${EXTERNAL_DIR}/python")
 
+    fetch_archive(
+        NAME    "deno-${DENO_VERSION}-win64.zip"
+        URL     "${DENO_WIN_URL}"
+        SHA256  "${DENO_WIN_SHA256}"
+        DESTINATION "${EXTERNAL_DIR}/deno-bin")
+    message(STATUS "Staged deno ${DENO_VERSION} at ${EXTERNAL_DIR}/deno-bin/deno.exe")
+
 elseif(CMAKE_HOST_APPLE)
     message(STATUS "Preparing macOS dependencies in ${EXTERNAL_DIR}")
 
@@ -174,6 +197,36 @@ elseif(CMAKE_HOST_APPLE)
                          GROUP_READ GROUP_EXECUTE
                          WORLD_READ WORLD_EXECUTE)
     message(STATUS "Staged ffmpeg at ${EXTERNAL_DIR}/ffmpeg-bin/ffmpeg")
+
+    # Pick the deno binary that matches the host architecture. macos-latest
+    # GHA runners are Apple Silicon; the x86_64 fallback covers Intel macs.
+    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(deno_url    "${DENO_MAC_ARM_URL}")
+        set(deno_sha256 "${DENO_MAC_ARM_SHA256}")
+        set(deno_arch   "aarch64")
+    else()
+        set(deno_url    "${DENO_MAC_X86_URL}")
+        set(deno_sha256 "${DENO_MAC_X86_SHA256}")
+        set(deno_arch   "x86_64")
+    endif()
+    fetch_archive(
+        NAME    "deno-${DENO_VERSION}-macos-${deno_arch}.zip"
+        URL     "${deno_url}"
+        SHA256  "${deno_sha256}"
+        DESTINATION "${EXTERNAL_DIR}/deno-extracted")
+    file(GLOB found_deno "${EXTERNAL_DIR}/deno-extracted/deno")
+    if(NOT found_deno)
+        message(FATAL_ERROR "Could not locate deno binary in extracted archive")
+    endif()
+    list(GET found_deno 0 deno_bin)
+    file(REMOVE_RECURSE "${EXTERNAL_DIR}/deno-bin")
+    file(MAKE_DIRECTORY "${EXTERNAL_DIR}/deno-bin")
+    file(COPY "${deno_bin}"
+        DESTINATION "${EXTERNAL_DIR}/deno-bin/"
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
+                         GROUP_READ GROUP_EXECUTE
+                         WORLD_READ WORLD_EXECUTE)
+    message(STATUS "Staged deno (${deno_arch}) at ${EXTERNAL_DIR}/deno-bin/deno")
 
     # TODO: bundle Python on macOS via astral-sh/python-build-standalone.
     # The app already falls back to system python3, so this is non-blocking
