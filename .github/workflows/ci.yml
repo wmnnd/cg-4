@@ -103,7 +103,8 @@ jobs:
           Copy-Item external/deno-bin/deno.exe   stage/clipgrab/
           Copy-Item -Recurse external/python stage/clipgrab/python
 
-      - name: Zip bundle
+      - name: Zip bundle (Linux/macOS)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           cd stage
@@ -112,6 +113,12 @@ jobs:
           else
             zip -r "../clipgrab-${{ matrix.name }}.zip" clipgrab
           fi
+
+      - name: Zip bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # Git Bash on the Windows runner doesn't ship `zip`; use PowerShell.
+        run: Compress-Archive -Path stage/clipgrab -DestinationPath clipgrab-windows.zip
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
