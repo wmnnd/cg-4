@@ -39,6 +39,13 @@ public:
     virtual QString getExtensionForMode(int mode);
     virtual bool isAudioOnly(int /*mode*/) { return false;};
     virtual bool isAvailable();
+    // Whether this converter+mode keeps subtitle streams that yt-dlp embeds
+    // into its output file alive in the converted result.
+    virtual bool supportsSubtitleEmbedding(int /*mode*/) { return false; }
+    // Container yt-dlp should be told to merge into so the embedded subs
+    // survive the conversion step. Empty means "let yt-dlp pick".
+    virtual QString preferredMergeOutputFormat(int /*mode*/) { return QString(); }
+    void setEmbedSubtitles(bool embed) { embedSubtitles = embed; }
 
     QString target;
 
@@ -48,6 +55,7 @@ signals:
 
 protected:
         QList<QString> _modes;
+        bool embedSubtitles = false;
 };
 
 #endif // CONVERTER_H

@@ -238,6 +238,88 @@ padding: 10px;
         <item row="2" column="0" colspan="5">
          <widget class="QLineEdit" name="downloadLineEdit"/>
         </item>
+        <item row="3" column="0">
+         <widget class="QLabel" name="downloadLabelLanguage">
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text">
+           <string>Audio language:</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="1">
+         <widget class="QComboBox" name="downloadComboLanguage">
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>210</width>
+            <height>16777215</height>
+           </size>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="2">
+         <widget class="QLabel" name="downloadLabelSubtitles">
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="Maximum" vsizetype="Preferred">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="text">
+           <string>Include subtitles:</string>
+          </property>
+         </widget>
+        </item>
+        <item row="3" column="3" colspan="2">
+         <widget class="CheckableComboBox" name="downloadComboSubtitles">
+          <property name="enabled">
+           <bool>false</bool>
+          </property>
+          <property name="visible">
+           <bool>false</bool>
+          </property>
+          <property name="sizePolicy">
+           <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+            <horstretch>0</horstretch>
+            <verstretch>0</verstretch>
+           </sizepolicy>
+          </property>
+          <property name="maximumSize">
+           <size>
+            <width>210</width>
+            <height>16777215</height>
+           </size>
+          </property>
+         </widget>
+        </item>
         <item row="0" column="0" colspan="5">
          <widget class="QLabel" name="downloadInfoBox">
           <property name="minimumSize">
@@ -1277,10 +1359,17 @@ ClipGrab is already available in many languages. If ClipGrab has not been transl
    <header location="global">web_engine_view.h</header>
    <container>1</container>
   </customwidget>
+  <customwidget>
+   <class>CheckableComboBox</class>
+   <extends>QComboBox</extends>
+   <header location="global">checkable_combo_box.h</header>
+  </customwidget>
  </customwidgets>
  <tabstops>
   <tabstop>downloadLineEdit</tabstop>
   <tabstop>downloadComboFormat</tabstop>
+  <tabstop>downloadComboLanguage</tabstop>
+  <tabstop>downloadComboSubtitles</tabstop>
   <tabstop>downloadComboQuality</tabstop>
   <tabstop>downloadStart</tabstop>
   <tabstop>downloadTree</tabstop>

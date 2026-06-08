@@ -83,7 +83,18 @@ QProcess* YoutubeDl::instance(QString path, QStringList arguments) {
             env.insert("SSL_CERT_FILE", pythonCaFile);
         }
 
-        env.insert("PATH", execPath + ":" + env.value("PATH"));
+        // Augment PATH with the usual Homebrew and system bin dirs so yt-dlp
+        // can find a JavaScript runtime (deno / node / ...). Without one, the
+        // YouTube extractor skips JS-solved manifests and we lose the combined
+        // HLS formats that carry per-language audio tracks.
+        QStringList pathParts;
+        pathParts << execPath
+                  << "/opt/homebrew/bin"
+                  << "/opt/homebrew/sbin"
+                  << "/usr/local/bin"
+                  << "/usr/local/sbin"
+                  << env.value("PATH");
+        env.insert("PATH", pathParts.join(":"));
         process->setProgram(pythonPath);
     #else
         env.insert("PATH", execPath + ":" + env.value("PATH"));

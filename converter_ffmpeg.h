@@ -44,6 +44,7 @@ class ffmpegThread : public QThread
     QList<QFile*> concatFiles;
     QFile* concatTarget;
     QString originalFormat;
+    bool embedSubtitles = false;
 
     void run();
 
@@ -61,6 +62,10 @@ public:
     bool isAvailable();
     QString getExtensionForMode(int mode);
     bool isAudioOnly(int mode);
+    // Only the MPEG4 (mp4) target keeps embedded subs through our ffmpeg
+    // step (via mov_text). WMV/Theora/the audio-only modes drop them.
+    bool supportsSubtitleEmbedding(int mode) override { return mode == 0; }
+    QString preferredMergeOutputFormat(int mode) override { return mode == 0 ? QString("mp4") : QString(); }
     ffmpegThread ffmpeg;
 
 public slots:

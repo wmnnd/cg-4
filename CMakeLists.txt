@@ -23,6 +23,7 @@ find_package(Qt6 REQUIRED COMPONENTS
 )
 
 set(CLIPGRAB_SOURCES
+    checkable_combo_box.cpp
     clipgrab.cpp
     converter.cpp
     converter_copy.cpp
@@ -39,6 +40,7 @@ set(CLIPGRAB_SOURCES
 )
 
 set(CLIPGRAB_HEADERS
+    checkable_combo_box.h
     clipgrab.h
     converter.h
     converter_copy.h

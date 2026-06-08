@@ -23,6 +23,20 @@
 
 #include "mainwindow.h"
 
+static int qualityIndexFromCombo(int comboIndex, video* video, const QString & language)
+{
+    if (comboIndex < 0 || video == nullptr) return -1;
+    QList<videoQuality> qualities = video->getQualities();
+    bool hasLanguageInfo = !video->getLanguages().isEmpty();
+    int seen = 0;
+    for (int i = 0; i < qualities.size(); i++) {
+        if (hasLanguageInfo && qualities.at(i).language != language) continue;
+        if (seen == comboIndex) return i;
+        seen++;
+    }
+    return -1;
+}
+
 MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
 {
@@ -31,6 +45,7 @@ MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     this->downloadMapper = nullptr;
     this->searchPage = nullptr;
     this->updatingComboQuality = false;
+    this->updatingComboLanguage = false;
     ui.setupUi(this);
 }
 
@@ -307,10 +322,20 @@ void MainWindow::targetFileSelected(video* video, QString target)
         }
     }
 
-    video->setQuality(ui.downloadComboQuality->currentIndex());
+    QString selectedLanguage;
+    if (ui.downloadComboLanguage->isVisible() && ui.downloadComboLanguage->currentIndex() >= 0) {
+        selectedLanguage = ui.downloadComboLanguage->currentData().toString();
+    }
+    int qualityIndex = qualityIndexFromCombo(ui.downloadComboQuality->currentIndex(), video, selectedLanguage);
+    video->setQuality(qualityIndex);
     int formatIndex = ui.downloadComboFormat->currentIndex();
     if (formatIndex < 0 || formatIndex >= cg->formats.size()) return;
     video->setConverter(cg->formats.at(formatIndex)._converter, cg->formats.at(formatIndex)._mode);
+    if (ui.downloadComboSubtitles->isVisible()) {
+        video->setSelectedSubtitles(ui.downloadComboSubtitles->checkedData());
+    } else {
+        video->setSelectedSubtitles(QStringList());
+    }
     video->setTargetFilename(target);
     cg->enqueueDownload(video);
     ui.downloadLineEdit->clear();
@@ -339,10 +364,64 @@ void MainWindow::handleCurrentVideoStateChanged(video* video) {
     ui.downloadLineEdit->setReadOnly(false);
     ui.downloadInfoBox->setText("<strong>" + video->getTitle() + "</strong>");
 
+    populateLanguageCombo(video);
+    populateSubtitleCombo(video);
+    QString selectedLanguage;
+    if (ui.downloadComboLanguage->isVisible() && ui.downloadComboLanguage->currentIndex() >= 0) {
+        selectedLanguage = ui.downloadComboLanguage->currentData().toString();
+    }
+    populateQualityCombo(video, selectedLanguage);
+}
+
+void MainWindow::populateLanguageCombo(video* video)
+{
+    this->updatingComboLanguage = true;
+    ui.downloadComboLanguage->clear();
+    QStringList languages = video ? video->getLanguages() : QStringList();
+    bool show = languages.size() >= 2;
+    ui.downloadLabelLanguage->setVisible(show);
+    ui.downloadComboLanguage->setVisible(show);
+    if (!show) {
+        this->updatingComboLanguage = false;
+        return;
+    }
+
+    QString originalLanguage = video->getOriginalLanguage();
+    // Place the original language first (if known) so it's the default.
+    if (!originalLanguage.isEmpty() && languages.contains(originalLanguage)) {
+        languages.removeAll(originalLanguage);
+        languages.prepend(originalLanguage);
+    }
+
+    for (int i = 0; i < languages.size(); i++) {
+        const QString& code = languages.at(i);
+        QString display = humanLanguageName(code);
+        if (!originalLanguage.isEmpty() && code == originalLanguage) {
+            display = tr("%1 (original)").arg(display);
+        }
+        ui.downloadComboLanguage->addItem(display, code);
+    }
+    ui.downloadComboLanguage->setCurrentIndex(0);
+    this->updatingComboLanguage = false;
+}
+
+void MainWindow::populateQualityCombo(video* video, const QString & language)
+{
     this->updatingComboQuality = true;
     ui.downloadComboQuality->clear();
+    if (video == nullptr) {
+        this->updatingComboQuality = false;
+        return;
+    }
+
     QList<videoQuality> qualities = video->getQualities();
+    bool hasLanguageInfo = !video->getLanguages().isEmpty();
+    // Store the quality's index in the unfiltered qualities list as user data so
+    // that downloads use the right entry regardless of how the combo was filtered.
+    QList<int> filteredIndices;
     for (int i = 0; i < qualities.size(); i++) {
+        if (hasLanguageInfo && qualities.at(i).language != language) continue;
+        filteredIndices << i;
         ui.downloadComboQuality->addItem(qualities.at(i).name, qualities.at(i).resolution);
     }
 
@@ -350,8 +429,8 @@ void MainWindow::handleCurrentVideoStateChanged(video* video) {
         int rememberedResolution = cg->settings.value("rememberedVideoQuality", -1).toInt();
         int bestResolutionMatch = 0;
         int bestResolutionMatchPosition = 0;
-        for (int i = 0; i < qualities.length(); i++) {
-            int resolution = qualities.at(i).resolution;
+        for (int i = 0; i < filteredIndices.length(); i++) {
+            int resolution = qualities.at(filteredIndices.at(i)).resolution;
             if (resolution <= rememberedResolution && resolution > bestResolutionMatch) {
                 bestResolutionMatch = resolution;
                 bestResolutionMatchPosition = i;
@@ -360,6 +439,53 @@ void MainWindow::handleCurrentVideoStateChanged(video* video) {
         ui.downloadComboQuality->setCurrentIndex(bestResolutionMatchPosition);
     }
     this->updatingComboQuality = false;
+}
+
+void MainWindow::populateSubtitleCombo(video* video)
+{
+    ui.downloadComboSubtitles->clearItems();
+    ui.downloadComboSubtitles->setPlaceholder(tr("None"));
+    QList<subtitle> subs = video ? video->getSubtitles() : QList<subtitle>();
+    for (int i = 0; i < subs.size(); i++) {
+        ui.downloadComboSubtitles->addCheckableItem(subs.at(i).name, subs.at(i).language);
+    }
+    updateSubtitleComboVisibility();
+}
+
+void MainWindow::updateSubtitleComboVisibility()
+{
+    video* current = cg->getCurrentVideo();
+    bool hasSubs = current != nullptr && !current->getSubtitles().isEmpty();
+    bool formatSupports = false;
+    int formatIndex = ui.downloadComboFormat->currentIndex();
+    if (formatIndex >= 0 && formatIndex < cg->formats.size()) {
+        const format & f = cg->formats.at(formatIndex);
+        formatSupports = f._converter && f._converter->supportsSubtitleEmbedding(f._mode);
+    }
+    bool show = hasSubs && formatSupports;
+    ui.downloadLabelSubtitles->setVisible(show);
+    ui.downloadComboSubtitles->setVisible(show);
+}
+
+QString MainWindow::humanLanguageName(const QString & code)
+{
+    if (code.isEmpty()) return tr("Default");
+    QLocale locale(code);
+    if (locale.language() == QLocale::C || locale.language() == QLocale::AnyLanguage) {
+        return code;
+    }
+    QString name = QLocale::languageToString(locale.language());
+    if (name.isEmpty()) return code;
+    return name;
+}
+
+void MainWindow::on_downloadComboLanguage_currentIndexChanged(int /*index*/)
+{
+    if (this->updatingComboLanguage) return;
+    video* current = cg->getCurrentVideo();
+    if (current == nullptr) return;
+    QString language = ui.downloadComboLanguage->currentData().toString();
+    populateQualityCombo(current, language);
 }
 
 void MainWindow::on_settingsSavedPath_textChanged(QString string)
@@ -457,10 +583,14 @@ void MainWindow::settingsClipboard_toggled(bool)
 void MainWindow::disableDownloadUi(bool disable)
 {
     ui.downloadComboFormat->setDisabled(disable);
+    ui.downloadComboLanguage->setDisabled(disable);
+    ui.downloadComboSubtitles->setDisabled(disable);
     ui.downloadComboQuality->setDisabled(disable);
     ui.downloadStart->setDisabled(disable);
     ui.label_2->setDisabled(disable);
     ui.label_3->setDisabled(disable);
+    ui.downloadLabelLanguage->setDisabled(disable);
+    ui.downloadLabelSubtitles->setDisabled(disable);
 }
 
 void MainWindow::disableDownloadTreeButtons(bool disable)
@@ -673,6 +803,7 @@ void MainWindow::handleSearchResultClicked(const QUrl & url)
 void MainWindow::on_downloadComboFormat_currentIndexChanged(int index)
 {
     cg->settings.setValue("LastFormat", index);
+    updateSubtitleComboVisibility();
 }
 
 void MainWindow::on_mainTab_currentChanged(int index)
