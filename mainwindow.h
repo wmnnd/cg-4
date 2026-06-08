@@ -80,6 +80,7 @@ private:
      void updateSearch(QString keywords);
      void updateYoutubeDlVersionInfo();
      void requestThumbnail(QListWidgetItem* item, const QString& url);
+     void showSearchPlaceholder(const QString& text);
 
 private slots:
     void handleCurrentVideoStateChanged(video*);

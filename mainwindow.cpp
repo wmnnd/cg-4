@@ -609,23 +609,34 @@ void MainWindow::on_searchLineEdit_textChanged(QString keywords)
     searchTimer.start(1500);
 
     if (isTimerActive) return;
-    ui.searchResults->clear();
-    QListWidgetItem* loading = new QListWidgetItem(tr("Loading …"));
-    loading->setFlags(Qt::ItemIsEnabled);
-    loading->setTextAlignment(Qt::AlignCenter);
-    ui.searchResults->addItem(loading);
+    showSearchPlaceholder(tr("Loading …"));
 }
 
 void MainWindow::updateSearch(QString keywords) {
+    // Only swap to the loading placeholder if we're not already showing it;
+    // the helper checks the marker we set on placeholder items.
     if (ui.searchResults->count() == 0
-            || ui.searchResults->item(0)->flags().testFlag(Qt::ItemIsSelectable)) {
-        ui.searchResults->clear();
-        QListWidgetItem* loading = new QListWidgetItem(tr("Loading …"));
-        loading->setFlags(Qt::ItemIsEnabled);
-        loading->setTextAlignment(Qt::AlignCenter);
-        ui.searchResults->addItem(loading);
+            || ui.searchResults->item(0)->data(Qt::UserRole + 1).toBool() == false) {
+        showSearchPlaceholder(tr("Loading …"));
     }
     cg->search(keywords);
+}
+
+void MainWindow::showSearchPlaceholder(const QString& text)
+{
+    thumbnailRequests.clear();
+    ui.searchResults->clear();
+    // Placeholders read better as a single wide row than as one tile in an
+    // otherwise-empty grid, so flip the view mode while they're shown.
+    ui.searchResults->setViewMode(QListView::ListMode);
+    ui.searchResults->setCursor(Qt::ArrowCursor);
+    QListWidgetItem* item = new QListWidgetItem(text);
+    item->setFlags(Qt::ItemIsEnabled);
+    item->setTextAlignment(Qt::AlignCenter);
+    // Mark this item as a placeholder so updateSearch() can tell whether
+    // a real search-result population is in progress vs. the loading state.
+    item->setData(Qt::UserRole + 1, true);
+    ui.searchResults->addItem(item);
 }
 
 void MainWindow::requestThumbnail(QListWidgetItem* item, const QString& url)
@@ -657,13 +668,12 @@ void MainWindow::handleSearchResults(video* searchPlaylist)
 
     QList<video*> videos = searchPlaylist->getPlaylistVideos();
     if (videos.isEmpty()) {
-        QListWidgetItem* empty = new QListWidgetItem(tr("No results found."));
-        empty->setFlags(Qt::ItemIsEnabled);
-        empty->setTextAlignment(Qt::AlignCenter);
-        ui.searchResults->addItem(empty);
+        showSearchPlaceholder(tr("No results found."));
         return;
     }
 
+    ui.searchResults->setViewMode(QListView::IconMode);
+    ui.searchResults->setCursor(Qt::PointingHandCursor);
     for (int i = 0; i < videos.length(); i++) {
         QString link = videos.at(i)->getUrl();
         QString title = videos.at(i)->getTitle();
@@ -675,6 +685,7 @@ void MainWindow::handleSearchResults(video* searchPlaylist)
 
         QListWidgetItem* item = new QListWidgetItem(label);
         item->setData(Qt::UserRole, link);
+        item->setTextAlignment(Qt::AlignHCenter | Qt::AlignTop);
         ui.searchResults->addItem(item);
         requestThumbnail(item, thumbnail);
     }
