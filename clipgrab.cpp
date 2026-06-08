@@ -23,6 +23,10 @@
 #include "clipgrab.h"
 #include <algorithm>
 
+#if defined(Q_OS_MAC)
+#include <sys/xattr.h>
+#endif
+
 ClipGrab::ClipGrab()
 {
     //*
@@ -598,6 +602,26 @@ void ClipGrab::downloadYoutubeDl(bool force) {
     }
 }
 
+// Parse a SHA2-256SUMS file (lines of "<64hex>  <filename>") and return the
+// SHA256 hex for the requested filename. Returns "" if missing.
+static QString sha256FromSumsFile(const QByteArray& sums, const QString& filename) {
+    const QList<QByteArray> lines = sums.split('\n');
+    for (const QByteArray& raw : lines) {
+        QByteArray line = raw.trimmed();
+        if (line.isEmpty()) continue;
+        // Tolerate either one space or two spaces between hash and name.
+        int sep = line.indexOf(' ');
+        if (sep <= 0) continue;
+        QByteArray hash = line.left(sep);
+        QByteArray name = line.mid(sep).trimmed();
+        if (hash.size() != 64) continue;
+        if (QString::fromUtf8(name) == filename) {
+            return QString::fromUtf8(hash);
+        }
+    }
+    return QString();
+}
+
 void ClipGrab::startYoutubeDlDownload() {
     this->helperDownloaderDialog->setDisabled(true);
 
@@ -605,47 +629,137 @@ void ClipGrab::startYoutubeDlDownload() {
     if (!QDir().exists(dir)) {
         QDir().mkpath(dir);
     }
-
     dir.remove("youtube-dl");
-    this->youtubeDlFile = new  QFile(dir + "/yt-dlp");
-    youtubeDlFile->open(QFile::WriteOnly);
-    if (!youtubeDlFile->isOpen()) {
-        errorHandler(tr("Unable to write to %1").arg(youtubeDlFile->fileName()));
-        QApplication::quit();
-    }
 
-    QString youtubeDlUrl = settings.value("youtubeDlUrl", "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp").toString();
-    QNetworkRequest request;
-    request.setUrl(QUrl(youtubeDlUrl));
-    // Qt6 follows redirects by default with NoLessSafeRedirectPolicy.
-    QNetworkAccessManager* youtubeDlNAM = new QNetworkAccessManager();
-    QNetworkReply* reply = youtubeDlNAM->get(request);
+    // Per-OS asset name: yt-dlp.exe / yt-dlp_macos / yt-dlp (script). We
+    // store the downloaded file under the same name so YoutubeDl::find()
+    // can locate it via expectedReleaseAssetName().
+    const QString assetName = YoutubeDl::expectedReleaseAssetName();
+    const QString targetPath = dir + "/" + assetName;
+    const QString baseUrl = settings.value(
+        "youtubeDlBaseUrl",
+        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/").toString();
+    const QUrl sumsUrl(baseUrl + "SHA2-256SUMS");
+    const QUrl binaryUrl(baseUrl + assetName);
 
-    connect(reply, &QNetworkReply::readyRead, [=]() {
-        youtubeDlFile->write(reply->readAll());
-    });
-    connect(reply, &QNetworkReply::downloadProgress, [=](qint64 bytesReceived, qint64 bytesTotal) {
-        this->helperDownloaderUi->progressBar->setMaximum(bytesTotal);
-        this->helperDownloaderUi->progressBar->setValue(bytesReceived);
-    });
+    QNetworkAccessManager* nam = new QNetworkAccessManager(this);
 
-    connect(reply, &QNetworkReply::sslErrors, [=](QList<QSslError> errors) {
-        for (int i = 0; i < errors.length(); i++) {
-            QString errorString = errors.at(i).errorString();
-            QString certInfo = errors.at(i).certificate().issuerDisplayName() + " " + errors.at(i).certificate().subjectDisplayName() + " " +  QString::fromUtf8(errors.at(i).certificate().serialNumber()) + " " + QString::number((int) errors.at(i).error());
-            errorHandler(tr("SSL error: %1 \n%2").arg(errorString).arg(certInfo));
-        }
-    });
-    connect(reply, &QNetworkReply::finished, [=] {
-        youtubeDlFile->close();
-
-        if (reply->error() != QNetworkReply::NetworkError::NoError) {
-            errorHandler(tr("Error downloading youtube-dlp: %1").arg(reply->errorString()));
+    // Step 1: fetch SHA2-256SUMS so we know what the binary should hash to.
+    // Both this and the binary download go through GitHub HTTPS — the SHA
+    // check catches CDN tampering / mid-download corruption; the GPG-signed
+    // SHA2-256SUMS.sig would catch a source compromise but verifying that
+    // requires an OpenPGP library Qt doesn't ship.
+    QNetworkReply* sumsReply = nam->get(QNetworkRequest(sumsUrl));
+    connect(sumsReply, &QNetworkReply::finished, this, [=, this] {
+        sumsReply->deleteLater();
+        if (sumsReply->error() != QNetworkReply::NoError) {
+            errorHandler(tr("Could not download SHA2-256SUMS: %1").arg(sumsReply->errorString()));
             QApplication::quit();
+            return;
         }
 
-        this->helperDownloaderDialog->accept();
-        emit youtubeDlDownloadFinished();
+        const QString expectedSha = sha256FromSumsFile(sumsReply->readAll(), assetName);
+        if (expectedSha.isEmpty()) {
+            errorHandler(tr("SHA2-256SUMS does not contain an entry for %1").arg(assetName));
+            QApplication::quit();
+            return;
+        }
+
+        // Step 2: download the binary itself. Write to a .partial file
+        // first so we never leave a half-written executable behind.
+        QFile* tempFile = new QFile(targetPath + ".partial");
+        if (!tempFile->open(QFile::WriteOnly | QFile::Truncate)) {
+            errorHandler(tr("Unable to write to %1").arg(tempFile->fileName()));
+            tempFile->deleteLater();
+            QApplication::quit();
+            return;
+        }
+        this->youtubeDlFile = tempFile;
+
+        QNetworkReply* reply = nam->get(QNetworkRequest(binaryUrl));
+
+        connect(reply, &QNetworkReply::readyRead, this, [=] {
+            tempFile->write(reply->readAll());
+        });
+        connect(reply, &QNetworkReply::downloadProgress, this,
+                [=](qint64 bytesReceived, qint64 bytesTotal) {
+            this->helperDownloaderUi->progressBar->setMaximum(bytesTotal);
+            this->helperDownloaderUi->progressBar->setValue(bytesReceived);
+        });
+        connect(reply, &QNetworkReply::sslErrors, this, [=](QList<QSslError> errors) {
+            for (const QSslError& e : errors) {
+                errorHandler(tr("SSL error: %1\n%2 %3").arg(
+                    e.errorString(),
+                    e.certificate().issuerDisplayName(),
+                    e.certificate().subjectDisplayName()));
+            }
+        });
+        connect(reply, &QNetworkReply::finished, this, [=, this] {
+            reply->deleteLater();
+            tempFile->close();
+
+            if (reply->error() != QNetworkReply::NoError) {
+                tempFile->remove();
+                tempFile->deleteLater();
+                errorHandler(tr("Error downloading %1: %2").arg(assetName, reply->errorString()));
+                QApplication::quit();
+                return;
+            }
+
+            // Step 3: verify the SHA256 against the sums file entry.
+            QCryptographicHash hash(QCryptographicHash::Sha256);
+            if (!tempFile->open(QFile::ReadOnly)) {
+                errorHandler(tr("Could not re-open %1 for hashing").arg(tempFile->fileName()));
+                QApplication::quit();
+                return;
+            }
+            hash.addData(tempFile);
+            tempFile->close();
+            const QString actualSha = QString::fromLatin1(hash.result().toHex());
+            if (actualSha.compare(expectedSha, Qt::CaseInsensitive) != 0) {
+                tempFile->remove();
+                tempFile->deleteLater();
+                errorHandler(tr(
+                    "Downloaded %1 failed SHA-256 verification.\n"
+                    "Expected: %2\nGot:      %3\n"
+                    "This usually means GitHub published a newer release between "
+                    "the SHA2-256SUMS fetch and the binary fetch — please retry."
+                    ).arg(assetName, expectedSha, actualSha));
+                QApplication::quit();
+                return;
+            }
+
+            // Step 4: move .partial to the final path and make it executable.
+            QFile::remove(targetPath);
+            if (!tempFile->rename(targetPath)) {
+                errorHandler(tr("Could not move %1 to %2: %3").arg(
+                    tempFile->fileName(), targetPath, tempFile->errorString()));
+                QApplication::quit();
+                return;
+            }
+
+            #if !defined(Q_OS_WIN)
+                QFile::setPermissions(targetPath,
+                    QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+                    | QFile::ReadGroup | QFile::ExeGroup
+                    | QFile::ReadOther | QFile::ExeOther);
+            #endif
+            #if defined(Q_OS_MAC)
+                // QNetworkAccessManager writes via plain POSIX write(2) so
+                // the file typically isn't quarantined to begin with, but
+                // strip the xattr defensively in case some future Qt /
+                // macOS combination starts adding it. removexattr is the
+                // documented Darwin syscall.
+                ::removexattr(targetPath.toUtf8().constData(),
+                              "com.apple.quarantine", XATTR_NOFOLLOW);
+            #endif
+
+            this->youtubeDlFile = nullptr;
+            tempFile->deleteLater();
+
+            this->helperDownloaderDialog->accept();
+            emit youtubeDlDownloadFinished();
+        });
     });
 }
 

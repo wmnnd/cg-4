@@ -8,11 +8,25 @@ YoutubeDl::YoutubeDl()
 QString YoutubeDl::path = QString();
 QString YoutubeDl::pythonCaFile = QString();
 
+QString YoutubeDl::expectedReleaseAssetName() {
+#if defined(Q_OS_WIN)
+    return "yt-dlp.exe";
+#elif defined(Q_OS_MAC)
+    return "yt-dlp_macos";
+#else
+    // Linux still runs the .py script through system python3 — yt-dlp_linux
+    // is also available but adds 25 MB for no real win when we have python.
+    return "yt-dlp";
+#endif
+}
+
 QString YoutubeDl::find(bool force) {
     if (!force && !path.isEmpty()) return path;
 
-    // Prefer downloaded youtube-dl
-    QString localPath = QStandardPaths::locate(QStandardPaths::AppDataLocation, "yt-dlp");
+    // Prefer the downloaded copy. After the macOS/Windows switch this is
+    // the PyInstaller binary; on Linux it's still the .py script.
+    QString localPath = QStandardPaths::locate(
+        QStandardPaths::AppDataLocation, expectedReleaseAssetName());
     if (!localPath.isEmpty()) {
         QProcess* process = instance(localPath, QStringList() << "--version");
         process->start();
@@ -26,7 +40,7 @@ QString YoutubeDl::find(bool force) {
         }
     }
 
-    // Try system-wide youtube-dlp installation
+    // Try system-wide yt-dlp installation
     QString globalPath = QStandardPaths::findExecutable("yt-dlp");
     if (!globalPath.isEmpty()) {
         QProcess* process = instance(globalPath, QStringList() << "--version");
@@ -53,43 +67,37 @@ QProcess* YoutubeDl::instance(QString path, QStringList arguments) {
 
     QString execPath = QCoreApplication::applicationDirPath();
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QStringList finalArgs;
 
-    #if defined Q_OS_WIN
+    #if defined(Q_OS_WIN)
+        // yt-dlp.exe is a PyInstaller bundle — spawn it directly, no Python
+        // wrapper. execPath stays on PATH so the bundled ffmpeg.exe / deno.exe
+        // are reachable when yt-dlp shells out.
         env.insert("PATH", QDir::toNativeSeparators(execPath) + ";" + env.value("PATH"));
-        process->setProgram(execPath + "/python/python.exe");
-    #elif defined Q_OS_MAC
-        QDir pythonDir(execPath + "/../Frameworks/Python.framework/Versions/Current/bin");
-        QString pythonPath = pythonDir.canonicalPath() + "/python3";
-        if (QFile::exists(pythonPath)) {
-            if (pythonCaFile.isEmpty()) {
-                QProcess* caFileProcess = new QProcess();
-                caFileProcess->setProgram(pythonPath);
-                caFileProcess->setProcessEnvironment(env);
-                caFileProcess->setArguments(QStringList() << "-m" << "pip._vendor.certifi");
-                caFileProcess->start();
-                caFileProcess->waitForFinished(10000);
-                pythonCaFile = caFileProcess->readLine().trimmed();
-                QString error = caFileProcess->readAllStandardError();
-                if (!error.isEmpty()) {
-                    qDebug() << "Error finding Python certificates" << error;
-                }
-                qDebug() << "Using SSL_CERT_FILE" << pythonCaFile;
-            }
-        } else {
-            pythonPath = QStandardPaths::findExecutable("python3");
-        }
-
-        if (!pythonCaFile.isEmpty()) {
-            env.insert("SSL_CERT_FILE", pythonCaFile);
-        }
-
-        env.insert("PATH", execPath + ":" + env.value("PATH"));
-        process->setProgram(pythonPath);
+        process->setProgram(path);
+        finalArgs = arguments;
+    #elif defined(Q_OS_MAC)
+        // yt-dlp_macos is a PyInstaller bundle. Augment PATH with execPath
+        // (bundled ffmpeg / deno) and the usual Homebrew / system bin dirs
+        // so the JavaScript runtime (deno / node) is found when the YouTube
+        // extractor needs it.
+        QStringList pathParts;
+        pathParts << execPath
+                  << "/opt/homebrew/bin"
+                  << "/opt/homebrew/sbin"
+                  << "/usr/local/bin"
+                  << "/usr/local/sbin"
+                  << env.value("PATH");
+        env.insert("PATH", pathParts.join(":"));
+        process->setProgram(path);
+        finalArgs = arguments;
     #else
+        // Linux: keep running the .py script through the system Python.
         env.insert("PATH", execPath + ":" + env.value("PATH"));
         process->setProgram(QStandardPaths::findExecutable("python3"));
+        finalArgs = QStringList() << path << arguments;
     #endif
-    
+
     QSettings settings;
     QStringList proxyArguments;
     if (settings.value("UseProxy", false).toBool()) {
@@ -116,10 +124,11 @@ QProcess* YoutubeDl::instance(QString path, QStringList arguments) {
         networkArguments << "--force-ipv4";
     }
 
-    process->setArguments(QStringList() << path << arguments << proxyArguments << networkArguments);
+    finalArgs << proxyArguments << networkArguments;
+    process->setArguments(finalArgs);
     process->setWorkingDirectory(QDir::tempPath());
     process->setProcessEnvironment(env);
-    
+
     return process;
 }
 
@@ -133,18 +142,27 @@ QString YoutubeDl::getVersion() {
 }
 
 QString YoutubeDl::getPythonVersion() {
-    QProcess* youtubeDl = instance(QStringList());
-    youtubeDl->setArguments(QStringList("--version"));
-    youtubeDl->start();
-    youtubeDl->waitForFinished(10000);
-    QString version = youtubeDl->readAllStandardOutput() + youtubeDl->readAllStandardError();
-    youtubeDl->deleteLater();
-    return version.replace("\n", "");
+    // The PyInstaller bundle on macOS/Windows is self-contained, so there's
+    // no separately-invocable Python interpreter to interrogate. Only the
+    // Linux path still runs through a system python3.
+    #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+        return QString();
+    #else
+        QProcess* python = new QProcess();
+        python->setProgram(QStandardPaths::findExecutable("python3"));
+        python->setArguments(QStringList("--version"));
+        python->start();
+        python->waitForFinished(10000);
+        QString version = python->readAllStandardOutput() + python->readAllStandardError();
+        python->deleteLater();
+        return version.replace("\n", "");
+    #endif
 }
 
 QString YoutubeDl::findPython() {
-    QProcess* youtubeDl = instance(QStringList());
-    QString program = youtubeDl->program();
-    youtubeDl->deleteLater();
-    return program;
+    #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+        return QString();  // bundled into the PyInstaller binary, no path
+    #else
+        return QStandardPaths::findExecutable("python3");
+    #endif
 }
