@@ -3,12 +3,15 @@
 # Usage:
 #   cmake -P cmake/PrepareDependencies.cmake [-DEXTERNAL_DIR=<path>]
 #
-# On Windows: fetches a static ffmpeg build (BtbN) and the embeddable Python
-# distribution from python.org.
-# On macOS:   fetches an Apple Silicon static ffmpeg (Martin Riedl) and a
-#             relocatable Python framework (python-build-standalone). The
-#             macOS build targets arm64 only — Intel macs are not supported.
-# On Linux:   no-op. ClipGrab on Linux uses system ffmpeg and system python3.
+# On Windows: fetches a static ffmpeg build (BtbN) and the deno JS runtime.
+# On macOS:   fetches an Apple Silicon static ffmpeg (Martin Riedl) and the
+#             deno JS runtime. The macOS build targets arm64 only — Intel
+#             macs are not supported.
+# On Linux:   no-op. ClipGrab on Linux uses system ffmpeg.
+#
+# Python is no longer downloaded here: yt-dlp's own PyInstaller binaries
+# (yt-dlp_macos, yt-dlp.exe) are fetched at app runtime instead, which
+# already bundle CPython + the stdlib subset they need.
 #
 # Each archive is fetched into <EXTERNAL_DIR>/cache/, verified against a
 # pinned SHA256, and extracted into a platform-specific subdirectory of
@@ -42,21 +45,6 @@ set(FFMPEG_MAC_URL
 # TODO: pin once verified. First run will print the computed value.
 set(FFMPEG_MAC_SHA256 "")
 
-set(PYTHON_VERSION "3.13.12")
-set(PYTHON_WIN_URL
-    "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip")
-set(PYTHON_WIN_SHA256
-    "76f238f606250c87c6beac75dccd35ee99070a13490555936abb6cb64ecce3d0")
-
-# macOS Python from astral-sh/python-build-standalone (relocatable builds).
-# The install_only tarball extracts to a `python/` directory which we stage
-# under Contents/Frameworks/Python.framework/Versions/Current/ in the bundle.
-set(PYTHON_MAC_VERSION "3.13.13")
-set(PYTHON_MAC_RELEASE "20260510")
-set(PYTHON_MAC_URL
-    "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_MAC_RELEASE}/cpython-${PYTHON_MAC_VERSION}+${PYTHON_MAC_RELEASE}-aarch64-apple-darwin-install_only.tar.gz")
-# TODO: pin once verified.
-set(PYTHON_MAC_SHA256 "")
 # yt-dlp's YouTube extractor invokes a JS runtime (deno preferred, node
 # fallback) for signature deciphering. Without one in PATH, per-language
 # combined HLS formats disappear from the picker, so we ship deno alongside
@@ -166,13 +154,6 @@ if(CMAKE_HOST_WIN32)
     message(STATUS "Staged ffmpeg.exe at ${EXTERNAL_DIR}/ffmpeg-bin/ffmpeg.exe")
 
     fetch_archive(
-        NAME    "python-${PYTHON_VERSION}-embed-amd64.zip"
-        URL     "${PYTHON_WIN_URL}"
-        SHA256  "${PYTHON_WIN_SHA256}"
-        DESTINATION "${EXTERNAL_DIR}/python")
-    message(STATUS "Staged Python ${PYTHON_VERSION} at ${EXTERNAL_DIR}/python")
-
-    fetch_archive(
         NAME    "deno-${DENO_VERSION}-win64.zip"
         URL     "${DENO_WIN_URL}"
         SHA256  "${DENO_WIN_SHA256}"
@@ -225,19 +206,6 @@ elseif(CMAKE_HOST_APPLE)
                          GROUP_READ GROUP_EXECUTE
                          WORLD_READ WORLD_EXECUTE)
     message(STATUS "Staged deno at ${EXTERNAL_DIR}/deno-bin/deno")
-
-    fetch_archive(
-        NAME    "python-${PYTHON_MAC_VERSION}-${PYTHON_MAC_RELEASE}-macos-arm64.tar.gz"
-        URL     "${PYTHON_MAC_URL}"
-        SHA256  "${PYTHON_MAC_SHA256}"
-        DESTINATION "${EXTERNAL_DIR}/python-mac")
-    # The tarball top-level is `python/`; expose a stable path the CI workflow
-    # can splice into Contents/Frameworks/Python.framework/Versions/Current/.
-    if(NOT EXISTS "${EXTERNAL_DIR}/python-mac/python/bin/python3")
-        message(FATAL_ERROR
-            "Expected ${EXTERNAL_DIR}/python-mac/python/bin/python3 after extract")
-    endif()
-    message(STATUS "Staged Python ${PYTHON_MAC_VERSION} at ${EXTERNAL_DIR}/python-mac/python")
 
 elseif(CMAKE_HOST_UNIX)
     message(STATUS "Linux build: no bundled runtime dependencies "
