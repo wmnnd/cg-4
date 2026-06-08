@@ -674,6 +674,8 @@ void MainWindow::handleSearchResults(video* searchPlaylist)
 
     ui.searchResults->setViewMode(QListView::IconMode);
     ui.searchResults->setCursor(Qt::PointingHandCursor);
+    QPixmap placeholder(160, 90);
+    placeholder.fill(QColor(220, 220, 220));
     for (int i = 0; i < videos.length(); i++) {
         QString link = videos.at(i)->getUrl();
         QString title = videos.at(i)->getTitle();
@@ -683,9 +685,12 @@ void MainWindow::handleSearchResults(video* searchPlaylist)
         QString label = title;
         if (!duration.isEmpty()) label += "\n" + duration;
 
-        QListWidgetItem* item = new QListWidgetItem(label);
+        QListWidgetItem* item = new QListWidgetItem(QIcon(placeholder), label);
         item->setData(Qt::UserRole, link);
-        item->setTextAlignment(Qt::AlignHCenter | Qt::AlignTop);
+        // Each card: 16:9 thumbnail + 3 wrapped lines of title + duration.
+        // sizeHint forces an explicit cell size so the grid layout stays
+        // stable even before thumbnails finish loading.
+        item->setSizeHint(QSize(200, 170));
         ui.searchResults->addItem(item);
         requestThumbnail(item, thumbnail);
     }

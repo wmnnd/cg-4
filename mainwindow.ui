@@ -214,17 +214,11 @@ QListView::item:selected { background: palette(highlight); color: palette(highli
           <property name="resizeMode">
            <enum>QListView::Adjust</enum>
           </property>
-          <property name="gridSize">
-           <size>
-            <width>220</width>
-            <height>180</height>
-           </size>
+          <property name="spacing">
+           <number>8</number>
           </property>
           <property name="viewMode">
            <enum>QListView::IconMode</enum>
-          </property>
-          <property name="uniformItemSizes">
-           <bool>true</bool>
           </property>
           <property name="wordWrap">
            <bool>true</bool>
