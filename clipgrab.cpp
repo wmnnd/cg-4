@@ -380,10 +380,10 @@ void ClipGrab::parseUpdateInfo(QNetworkReply* reply)
                 this->updateMessageUi->progressBar->hide();
                 this->updateMessageUi->labelDownloadProgress->hide();
 
-                this->updateMessageUi->webEngineView->setPage(new QWebEnginePage(new QWebEngineProfile));
-                this->updateMessageUi->webEngineView->setHtml(updateNotesDocument.toString());
-                this->updateMessageUi->webEngineView->setContextMenuPolicy(Qt::NoContextMenu);
-                this->updateMessageUi->webEngineView->setAcceptDrops(false);
+                this->updateMessageUi->textBrowser->setOpenExternalLinks(true);
+                this->updateMessageUi->textBrowser->setHtml(updateNotesDocument.toString());
+                this->updateMessageUi->textBrowser->setContextMenuPolicy(Qt::NoContextMenu);
+                this->updateMessageUi->textBrowser->setAcceptDrops(false);
 
                 this->updateReply = nullptr;
                 this->updateFile = nullptr;

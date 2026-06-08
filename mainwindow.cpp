@@ -29,7 +29,7 @@ MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     this->cg = cg;
     this->changeTabMapper = nullptr;
     this->downloadMapper = nullptr;
-    this->searchPage = nullptr;
+    this->thumbnailNAM = nullptr;
     this->updatingComboQuality = false;
     ui.setupUi(this);
 }
@@ -37,7 +37,6 @@ MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
 
 MainWindow::~MainWindow()
 {
-    delete this->searchPage;
 }
 
 void MainWindow::init()
@@ -103,12 +102,12 @@ void MainWindow::init()
     //*
     //* Search Tab
     //*
-    QWebEngineProfile* profile = new QWebEngineProfile;
-    this->searchPage = new SearchWebEnginePage(profile);
-    ui.searchWebEngineView->setPage(searchPage);
-    ui.searchWebEngineView->settings()->setAttribute(QWebEngineSettings::FocusOnNavigationEnabled, false);
-    ui.searchWebEngineView->setContextMenuPolicy(Qt::NoContextMenu);
-    connect(ui.searchWebEngineView->page(), SIGNAL(linkClicked(QUrl)), this, SLOT(handleSearchResultClicked(QUrl)));
+    thumbnailNAM = new QNetworkAccessManager(this);
+    ui.searchResults->setContextMenuPolicy(Qt::NoContextMenu);
+    connect(ui.searchResults, &QListWidget::itemActivated,
+            this, &MainWindow::handleSearchResultActivated);
+    connect(ui.searchResults, &QListWidget::itemClicked,
+            this, &MainWindow::handleSearchResultActivated);
     connect(&searchTimer, SIGNAL(timeout()), this, SLOT(searchTimerTimeout()));
     connect(cg, &ClipGrab::youtubeDlDownloadFinished, [=] {
         YoutubeDl::find(true);
@@ -224,7 +223,7 @@ void MainWindow::init()
     //* Drag and Drop
     //*
     this->setAcceptDrops(true);
-    this->ui.searchWebEngineView->setAcceptDrops(false);
+    this->ui.searchResults->setAcceptDrops(false);
 
     //*
     //*Keyboard shortcuts
@@ -610,64 +609,84 @@ void MainWindow::on_searchLineEdit_textChanged(QString keywords)
     searchTimer.start(1500);
 
     if (isTimerActive) return;
-    this->ui.searchWebEngineView->page()->load(QUrl("qrc:///search/loading-progress.html"));
+    ui.searchResults->clear();
+    QListWidgetItem* loading = new QListWidgetItem(tr("Loading …"));
+    loading->setFlags(Qt::ItemIsEnabled);
+    loading->setTextAlignment(Qt::AlignCenter);
+    ui.searchResults->addItem(loading);
 }
 
 void MainWindow::updateSearch(QString keywords) {
-    if (this->ui.searchWebEngineView->page()->url().toString() != "qrc:///search/loading-progress.html") {
-        this->ui.searchWebEngineView->page()->load(QUrl("qrc:///search/loading-progress.html"));
+    if (ui.searchResults->count() == 0
+            || ui.searchResults->item(0)->flags().testFlag(Qt::ItemIsSelectable)) {
+        ui.searchResults->clear();
+        QListWidgetItem* loading = new QListWidgetItem(tr("Loading …"));
+        loading->setFlags(Qt::ItemIsEnabled);
+        loading->setTextAlignment(Qt::AlignCenter);
+        ui.searchResults->addItem(loading);
     }
     cg->search(keywords);
 }
 
+void MainWindow::requestThumbnail(QListWidgetItem* item, const QString& url)
+{
+    if (url.isEmpty()) return;
+    QNetworkReply* reply = thumbnailNAM->get(QNetworkRequest(QUrl(url)));
+    thumbnailRequests.insert(reply, item);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        QListWidgetItem* target = thumbnailRequests.take(reply);
+        reply->deleteLater();
+        if (target == nullptr) return;  // item was cleared before reply arrived
+        // Confirm the item still belongs to the current list (clearing the
+        // list deletes the items, so a dangling pointer would crash).
+        if (ui.searchResults->row(target) < 0) return;
+        if (reply->error() != QNetworkReply::NoError) return;
+        QPixmap pm;
+        if (pm.loadFromData(reply->readAll())) {
+            target->setIcon(QIcon(pm));
+        }
+    });
+}
+
 void MainWindow::handleSearchResults(video* searchPlaylist)
 {
-    QList<video*> videos = searchPlaylist->getPlaylistVideos();
+    // Cancel any thumbnail requests still in flight from the previous search
+    // — their target items are about to be destroyed by clear().
+    thumbnailRequests.clear();
+    ui.searchResults->clear();
 
-    QString searchHtml;
-    #ifdef Q_OS_MAC
-        QString fontFamily = "Helvetica Neue";
-    #else
-        QFontDatabase fontDatabase;
-        QString font = fontDatabase.systemFont(QFontDatabase::GeneralFont).family();
-        QString fontFamily = "'" + font + "',  sans-serif";
-    #endif
-    searchHtml.append("<!doctype html>");
-    searchHtml.append("<html>");
-    searchHtml.append("<head>");
-    searchHtml.append("<style>body {font-family: " + fontFamily + "}</style>");
-    searchHtml.append("<link rel=\"stylesheet\" href=\"qrc:///search/search-styles.css\"></link>");
-    searchHtml.append("</head>");
-    searchHtml.append("<body>");
+    QList<video*> videos = searchPlaylist->getPlaylistVideos();
+    if (videos.isEmpty()) {
+        QListWidgetItem* empty = new QListWidgetItem(tr("No results found."));
+        empty->setFlags(Qt::ItemIsEnabled);
+        empty->setTextAlignment(Qt::AlignCenter);
+        ui.searchResults->addItem(empty);
+        return;
+    }
 
     for (int i = 0; i < videos.length(); i++) {
         QString link = videos.at(i)->getUrl();
         QString title = videos.at(i)->getTitle();
         QString thumbnail = videos.at(i)->getThumbnail();
         QString duration = cg->humanizeSeconds(videos.at(i)->getDuration());
-        searchHtml.append("<a href=\"" + link + "\" class=\"entry\">");
-        searchHtml.append("<span class=\"title\">" + title + "</span>");
-        searchHtml.append("<span class=\"thumbnail\" style=\"background-image: url('" + thumbnail + "')\"</span>");
-        if (!duration.isEmpty()) {
-            searchHtml.append("<span class=\"duration\">" + duration + "</span>");
-        }
-        searchHtml.append("</a>");
-    }
 
-    searchHtml.append("</body>");
-    searchHtml.append("</html>");
-    if (videos.length() == 0) {
-        QFile loadingFailedHTML(":/search/loading-failed.html");
-        loadingFailedHTML.open(QFile::ReadOnly);
-        searchHtml = QString(loadingFailedHTML.readAll()).replace("%NORESULTS%", tr("No results found."));
+        QString label = title;
+        if (!duration.isEmpty()) label += "\n" + duration;
+
+        QListWidgetItem* item = new QListWidgetItem(label);
+        item->setData(Qt::UserRole, link);
+        ui.searchResults->addItem(item);
+        requestThumbnail(item, thumbnail);
     }
-    this->ui.searchWebEngineView->page()->setHtml(searchHtml);
 }
 
-void MainWindow::handleSearchResultClicked(const QUrl & url)
+void MainWindow::handleSearchResultActivated(QListWidgetItem* item)
 {
-    this->ui.downloadLineEdit->setText(url.toString());
-    this->ui.mainTab->setCurrentIndex(1);
+    if (item == nullptr) return;
+    QString url = item->data(Qt::UserRole).toString();
+    if (url.isEmpty()) return;
+    ui.downloadLineEdit->setText(url);
+    ui.mainTab->setCurrentIndex(1);
 }
 
 void MainWindow::on_downloadComboFormat_currentIndexChanged(int index)

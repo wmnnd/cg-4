@@ -16,8 +16,6 @@ find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Network
     Xml
-    WebEngineCore
-    WebEngineWidgets
     Core5Compat
     LinguistTools
 )
@@ -34,7 +32,6 @@ set(CLIPGRAB_SOURCES
     message_dialog.cpp
     notifications.cpp
     video.cpp
-    web_engine_view.cpp
     youtube_dl.cpp
 )
 
@@ -49,7 +46,6 @@ set(CLIPGRAB_HEADERS
     message_dialog.h
     notifications.h
     video.h
-    web_engine_view.h
     youtube_dl.h
 )
 
@@ -128,8 +124,6 @@ target_link_libraries(clipgrab PRIVATE
     Qt6::Widgets
     Qt6::Network
     Qt6::Xml
-    Qt6::WebEngineCore
-    Qt6::WebEngineWidgets
     Qt6::Core5Compat
 )
 

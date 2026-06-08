@@ -9,7 +9,7 @@
     it under the terms of the GNU General Public License as published by
     the Free Software Foundation, either version 3 of the License, or
     (at your option) any later version.
-    
+
     ClipGrab is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -24,19 +24,11 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include <QHash>
 #include <QMainWindow>
 #include <QSignalMapper>
 #include <QtXml>
 #include <QUrl>
-#include <QUrlQuery>
-#include <QWebEngineView>
-#include <QWebEnginePage>
-#include <QWebEngineProfile>
-#include <QWebEngineSettings>
-#include <QWebEngineUrlRequestInterceptor>
-#include <QWebEngineUrlRequestInfo>
-#include <QFontDatabase>
-#include <QRegularExpression>
 #include "ui_mainwindow.h"
 #include "ui_metadata-dialog.h"
 #include "clipgrab.h"
@@ -44,81 +36,8 @@
 #include "notifications.h"
 #include "download_list_model.h"
 
-
-class SearchWebEngineUrlRequestInterceptor : public QWebEngineUrlRequestInterceptor
-{
-    Q_OBJECT
-public:
-    using QWebEngineUrlRequestInterceptor::QWebEngineUrlRequestInterceptor;
-
-    void interceptRequest(QWebEngineUrlRequestInfo &info) override {
-        if (info.requestUrl().toString().startsWith("https://m.youtube.com/watch?")) {
-            info.block(true);
-            QUrl url;
-            url.setScheme("https");
-            url.setHost("www.youtube.com");
-            url.setPath("/watch");
-            url.setQuery("v=" + QUrlQuery(info.requestUrl().query()).queryItemValue("v"));
-            emit intercepted(url);
-        }
-    }
-
-signals:
-        void intercepted(const QUrl & url);
-};
-
-class SearchWebEnginePage : public QWebEnginePage
-{
-    Q_OBJECT
-public:
-    SearchWebEnginePage(QWebEngineProfile* profile, QObject* parent = nullptr) :  QWebEnginePage(profile, parent)
-    {
-        this->setAudioMuted(true);
-        // Parent the interceptor to the profile so its lifetime matches the
-        // profile that holds a pointer to it (avoids dangling pointer in profile).
-        SearchWebEngineUrlRequestInterceptor* interceptor = new SearchWebEngineUrlRequestInterceptor(profile);
-        this->profile()->setUrlRequestInterceptor(interceptor);
-        connect(interceptor, &SearchWebEngineUrlRequestInterceptor::intercepted, this, &SearchWebEnginePage::handleInterceptedUrl);
-    }
-
-
-    bool acceptNavigationRequest(const QUrl & url, QWebEnginePage::NavigationType type, bool isMainFrame) override
-    {
-        if (!isMainFrame) return true;
-
-        if (type == QWebEnginePage::NavigationTypeTyped)
-        {
-            QRegularExpression watchRe("https://(www|m)\\.youtube.com/watch");
-            if (watchRe.match(url.toString()).hasMatch())
-            {
-                emit linkClicked(url);
-                return false;
-            }
-            return true;
-        }
-        if (type == QWebEnginePage::NavigationTypeLinkClicked)
-        {
-            QRegularExpression hostRe("https://(www|m)\\.youtube.com");
-            if (hostRe.match(url.toString()).hasMatch())
-            {
-                emit linkClicked(url);
-            }
-        }
-        return false;
-    }
-protected:
-    void javaScriptConsoleMessage(QWebEnginePage::JavaScriptConsoleMessageLevel /*level*/, const QString & /*message*/, int /*lineNumber*/, const QString & /*sourceID*/) override {
-        //Don't log anything
-    }
-public slots:
-    void handleInterceptedUrl(const QUrl & url) {
-        emit linkIntercepted(url);
-    }
-signals:
-    void linkClicked(const QUrl & url);
-    void linkIntercepted(const QUrl & url);
-};
-
+class QNetworkAccessManager;
+class QListWidgetItem;
 
 class MainWindow : public QMainWindow
 {
@@ -152,10 +71,15 @@ private:
      void dragEnterEvent(QDragEnterEvent *event);
      void dropEvent(QDropEvent *event);
      bool updatingComboQuality;
-     SearchWebEnginePage* searchPage;
      QTimer searchTimer;
+     QNetworkAccessManager* thumbnailNAM;
+     // Items waiting on their thumbnail load — keyed by the reply we're
+     // waiting on so the handler can update the right row when the network
+     // request finishes (or quietly skip stale replies for cleared items).
+     QHash<QObject*, QListWidgetItem*> thumbnailRequests;
      void updateSearch(QString keywords);
      void updateYoutubeDlVersionInfo();
+     void requestThumbnail(QListWidgetItem* item, const QString& url);
 
 private slots:
     void handleCurrentVideoStateChanged(video*);
@@ -183,7 +107,7 @@ private slots:
     void settingsNotifications_toggled(bool);
     void settingsProxyChanged();
     void handleSearchResults(video*);
-    void handleSearchResultClicked(const QUrl & url);
+    void handleSearchResultActivated(QListWidgetItem* item);
 
     void handleFinishedConversion(video*);
     void on_settingsLanguage_currentIndexChanged(int index);
