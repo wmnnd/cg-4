@@ -10,24 +10,38 @@ QString YoutubeDl::pythonCaFile = QString();
 
 QString YoutubeDl::expectedReleaseAssetName() {
 #if defined(Q_OS_WIN)
-    return "yt-dlp.exe";
+    return "yt-dlp_win.zip";   // onedir bundle — fast cold start
 #elif defined(Q_OS_MAC)
-    return "yt-dlp_macos";
+    return "yt-dlp_macos.zip"; // onedir bundle — fast cold start
 #else
-    // Linux still runs the .py script through system python3 — yt-dlp_linux
-    // is also available but adds 25 MB for no real win when we have python.
+    return "yt-dlp";           // Linux: still the .py script
+#endif
+}
+
+QString YoutubeDl::bundledBinaryName() {
+#if defined(Q_OS_WIN)
+    return "yt-dlp.exe";
+#else
     return "yt-dlp";
+#endif
+}
+
+QString YoutubeDl::installDir() {
+    QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+#if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+    return base + "/yt-dlp";
+#else
+    return base;
 #endif
 }
 
 QString YoutubeDl::find(bool force) {
     if (!force && !path.isEmpty()) return path;
 
-    // Prefer the downloaded copy. After the macOS/Windows switch this is
-    // the PyInstaller binary; on Linux it's still the .py script.
-    QString localPath = QStandardPaths::locate(
-        QStandardPaths::AppDataLocation, expectedReleaseAssetName());
-    if (!localPath.isEmpty()) {
+    // Prefer the downloaded copy. On macOS/Windows that's the extracted
+    // onedir bundle; on Linux it's the .py script.
+    QString localPath = installDir() + "/" + bundledBinaryName();
+    if (QFile::exists(localPath)) {
         QProcess* process = instance(localPath, QStringList() << "--version");
         process->start();
         process->waitForFinished();
