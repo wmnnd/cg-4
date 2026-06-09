@@ -622,45 +622,81 @@ static QString sha256FromSumsFile(const QByteArray& sums, const QString& filenam
     return QString();
 }
 
-// Extract a yt-dlp onedir zip (downloaded as <assetName>.partial) into
-// <installDir>/yt-dlp/, with `bundledBinaryName()` at its root. We shell out
-// to the platform's bundled archive tool — Qt has no public zip API and we'd
-// rather not add a third-party dep just for this.
-//
-// Returns the absolute path to the extracted binary on success, "" on
-// failure (in which case the temp dirs are cleaned up).
-static QString extractYoutubeDlBundle(const QString& zipPath, const QString& installDir, const QString& binaryName) {
-    // Wipe any previous install so we don't end up with a half-overlay.
-    QDir installed(installDir);
-    if (installed.exists()) {
-        installed.removeRecursively();
+// Remove a path whether it's a file, a symlink, or a directory. QDir::exists()
+// returns false for non-directory paths, so a plain QDir::removeRecursively
+// silently does nothing when the install dir is actually a stale file (e.g.
+// the single-file yt-dlp_macos artifact a previous version of this branch
+// downloaded). Returns true if the path is gone afterwards.
+static bool wipePath(const QString& path) {
+    QFileInfo info(path);
+    if (!info.exists() && !info.isSymLink()) return true;
+    if (info.isDir() && !info.isSymLink()) {
+        return QDir(path).removeRecursively();
     }
-    if (!QDir().mkpath(installDir)) return QString();
+    return QFile::remove(path);
+}
 
-    QString tmpDir = installDir + ".extract";
-    QDir tmp(tmpDir);
-    if (tmp.exists()) tmp.removeRecursively();
-    if (!QDir().mkpath(tmpDir)) return QString();
+// Extract a yt-dlp onedir zip into <installDir>/, with the actual binary at
+// <installDir>/<binaryName>. We shell out to the platform's bundled archive
+// tool — Qt has no public zip API and we'd rather not add a third-party dep
+// just for this.
+//
+// Both macOS and Windows use `tar` (bsdtar / libarchive), which reads zips
+// out of the box. Avoiding /usr/bin/unzip on macOS sidesteps the InfoZip
+// command being deprecated / removed in recent releases.
+//
+// `errorOut` receives a human-readable failure reason on error. Returns the
+// absolute path to the extracted binary on success, "" otherwise (in which
+// case all temp / partial state is wiped).
+static QString extractYoutubeDlBundle(const QString& zipPath, const QString& installDir,
+                                      const QString& binaryName, QString* errorOut) {
+    auto fail = [&](const QString& msg) {
+        if (errorOut) *errorOut = msg;
+        wipePath(installDir);
+        wipePath(installDir + ".extract");
+        return QString();
+    };
+
+    // Wipe any previous install so we don't end up with a half-overlay.
+    if (!wipePath(installDir)) {
+        return fail(QStringLiteral("could not remove existing install at %1").arg(installDir));
+    }
+    if (!QDir().mkpath(installDir)) {
+        return fail(QStringLiteral("could not create install dir %1").arg(installDir));
+    }
+
+    const QString tmpDir = installDir + ".extract";
+    if (!wipePath(tmpDir) || !QDir().mkpath(tmpDir)) {
+        return fail(QStringLiteral("could not prepare temp dir %1").arg(tmpDir));
+    }
 
     QProcess unzip;
     QStringList args;
     #if defined(Q_OS_WIN)
-        // tar.exe (bsdtar) has shipped with Windows 10 1803+ and reads zips.
         unzip.setProgram("tar");
         args << "-xf" << QDir::toNativeSeparators(zipPath)
              << "-C" << QDir::toNativeSeparators(tmpDir);
     #else
-        // /usr/bin/unzip is part of every supported macOS release.
-        unzip.setProgram("unzip");
-        args << "-q" << "-o" << zipPath << "-d" << tmpDir;
+        // bsdtar (libarchive) on macOS handles zip via -xf.
+        unzip.setProgram("/usr/bin/tar");
+        args << "-xf" << zipPath << "-C" << tmpDir;
     #endif
     unzip.setArguments(args);
     unzip.start();
-    if (!unzip.waitForFinished(60000) || unzip.exitCode() != 0) {
-        qDebug() << "yt-dlp extract failed:" << unzip.exitCode()
-                 << unzip.readAllStandardError();
-        QDir(tmpDir).removeRecursively();
-        return QString();
+    if (!unzip.waitForStarted(5000)) {
+        return fail(QStringLiteral("could not start %1: %2")
+                    .arg(unzip.program(), unzip.errorString()));
+    }
+    if (!unzip.waitForFinished(120000)) {
+        unzip.kill();
+        return fail(QStringLiteral("%1 did not finish within 120s").arg(unzip.program()));
+    }
+    if (unzip.exitStatus() != QProcess::NormalExit || unzip.exitCode() != 0) {
+        const QString stderr_ = QString::fromLocal8Bit(unzip.readAllStandardError()).trimmed();
+        return fail(QStringLiteral("%1 exited with %2: %3")
+                    .arg(unzip.program())
+                    .arg(unzip.exitCode())
+                    .arg(stderr_.isEmpty() ? QStringLiteral("(no stderr)") : stderr_));
     }
 
     // PyInstaller's onedir layout is <bundle-root>/<binaryName>+_internal/.
@@ -669,24 +705,21 @@ static QString extractYoutubeDlBundle(const QString& zipPath, const QString& ins
     QDirIterator it(tmpDir, QStringList() << binaryName,
                     QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
     if (!it.hasNext()) {
-        qDebug() << "yt-dlp extract: binary not found in" << tmpDir;
-        QDir(tmpDir).removeRecursively();
-        return QString();
+        return fail(QStringLiteral("extracted zip did not contain %1 under %2")
+                    .arg(binaryName, tmpDir));
     }
-    QString foundBinary = it.next();
-    QString bundleRoot = QFileInfo(foundBinary).absolutePath();
+    const QString foundBinary = it.next();
+    const QString bundleRoot = QFileInfo(foundBinary).absolutePath();
 
     // Move bundle-root contents into installDir.
     QDir src(bundleRoot);
     for (const QString& entry : src.entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot)) {
         if (!QFile::rename(bundleRoot + "/" + entry, installDir + "/" + entry)) {
-            qDebug() << "yt-dlp extract: failed to move" << entry;
-            QDir(tmpDir).removeRecursively();
-            QDir(installDir).removeRecursively();
-            return QString();
+            return fail(QStringLiteral("failed to move %1 from extract dir to install dir")
+                        .arg(entry));
         }
     }
-    QDir(tmpDir).removeRecursively();
+    wipePath(tmpDir);
     return installDir + "/" + binaryName;
 }
 
@@ -809,11 +842,14 @@ void ClipGrab::startYoutubeDlDownload() {
             // extract it into installDir/ and discard the zip.
             QString finalBinaryPath;
             if (isArchive) {
-                finalBinaryPath = extractYoutubeDlBundle(partialPath, installDir, binaryName);
+                QString extractError;
+                finalBinaryPath = extractYoutubeDlBundle(
+                    partialPath, installDir, binaryName, &extractError);
                 tempFile->remove();   // drop the .zip; we have the extracted tree now
                 tempFile->deleteLater();
                 if (finalBinaryPath.isEmpty()) {
-                    errorHandler(tr("Failed to extract %1 to %2").arg(assetName, installDir));
+                    errorHandler(tr("Failed to extract %1 into %2:\n%3")
+                                 .arg(assetName, installDir, extractError));
                     QApplication::quit();
                     return;
                 }
