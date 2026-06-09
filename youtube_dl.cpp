@@ -19,8 +19,14 @@ QString YoutubeDl::expectedReleaseAssetName() {
 }
 
 QString YoutubeDl::bundledBinaryName() {
+    // yt-dlp's PyInstaller bundles name the binary after the asset:
+    // yt-dlp_macos.zip → yt-dlp_macos, yt-dlp_win.zip → yt-dlp.exe (the
+    // x64 variant — _x86 / _arm64 use different filenames but we don't
+    // download those assets). Linux just runs the .py script.
 #if defined(Q_OS_WIN)
     return "yt-dlp.exe";
+#elif defined(Q_OS_MAC)
+    return "yt-dlp_macos";
 #else
     return "yt-dlp";
 #endif
