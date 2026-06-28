@@ -16,7 +16,6 @@ find_package(Qt6 REQUIRED COMPONENTS
     Widgets
     Network
     Xml
-    Core5Compat
     LinguistTools
 )
 
@@ -124,7 +123,6 @@ target_link_libraries(clipgrab PRIVATE
     Qt6::Widgets
     Qt6::Network
     Qt6::Xml
-    Qt6::Core5Compat
 )
 
 if(APPLE)

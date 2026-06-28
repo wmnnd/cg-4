@@ -30,7 +30,8 @@ jobs:
 
       - name: Install Linux build deps (Qt6 from apt)
         if: runner.os == 'Linux'
-        # WebEngine packages intentionally omitted — we don't link Qt6::WebEngine*.
+        # WebEngine and Core5Compat packages intentionally omitted — clipgrab
+        # links neither.
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -40,7 +41,6 @@ jobs:
             qt6-tools-dev \
             qt6-tools-dev-tools \
             qt6-l10n-tools \
-            libqt6core5compat6-dev \
             libxkbcommon-dev
 
       - name: Install Qt (macOS / Windows)
@@ -49,11 +49,12 @@ jobs:
         with:
           version: '6.9.0'
           arch: ${{ matrix.qt_arch }}
-          # WebEngine (and its qtwebchannel / qtpositioning siblings) are
-          # intentionally NOT installed. With WebEngine present in the Qt
+          # No extra modules required — qtbase + qttools (which install-qt
+          # pulls in by default) cover Core/Gui/Widgets/Network/Xml +
+          # LinguistTools. WebEngine, Core5Compat, qtwebchannel, etc. are
+          # intentionally NOT installed: with WebEngine present in the Qt
           # install, macdeployqt / windeployqt happily bundle the Chromium
           # frameworks even though clipgrab itself doesn't link them.
-          modules: 'qt5compat'
           cache: true
 
       - name: Cache external dependencies
