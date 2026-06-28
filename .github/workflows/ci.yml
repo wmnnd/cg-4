@@ -57,6 +57,18 @@ jobs:
           # frameworks even though clipgrab itself doesn't link them.
           cache: true
 
+      - name: Workaround missing AGL framework (macos-14+ SDK)
+        if: runner.os == 'macOS'
+        # Apple removed /System/Library/Frameworks/AGL.framework starting
+        # with the macOS 14 SDK that ships on the macos-latest runner. Qt
+        # 6.9.0's QtGui link interface still lists "-framework AGL" for
+        # legacy OpenGL support, so the link step fails with
+        #   ld: framework 'AGL' not found
+        # AGL was always a thin wrapper around the system OpenGL framework
+        # (itself deprecated but still present), so pointing AGL at OpenGL
+        # via a symlink resolves both the lookup and the runtime call paths.
+        run: sudo ln -sf /System/Library/Frameworks/OpenGL.framework /Library/Frameworks/AGL.framework
+
       - name: Cache external dependencies
         uses: actions/cache@v4
         with:
