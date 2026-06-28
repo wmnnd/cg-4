@@ -140,6 +140,19 @@ endif()
 
 qt_add_translations(clipgrab TS_FILES ${CLIPGRAB_TS_FILES})
 
+# Convenience target so configured trees can also fetch deps via:
+#   cmake --build build --target prepare-dependencies
+# Standalone equivalent (no configure step needed):
+#   cmake -P cmake/PrepareDependencies.cmake
+add_custom_target(prepare-dependencies
+    COMMAND ${CMAKE_COMMAND}
+        -DEXTERNAL_DIR=${CMAKE_SOURCE_DIR}/external
+        -P ${CMAKE_SOURCE_DIR}/cmake/PrepareDependencies.cmake
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    COMMENT "Fetching ffmpeg / deno runtime dependencies"
+    VERBATIM
+)
+
 install(TARGETS clipgrab
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin

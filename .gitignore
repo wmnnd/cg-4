@@ -22,3 +22,4 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 ClipGrab.xcodeproj
+external/

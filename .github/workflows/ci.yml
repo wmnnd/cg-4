@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - claude/remove-webengine
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+          - name: macos
+            os: macos-latest
+            qt_arch: clang_64
+          - name: windows
+            os: windows-latest
+            qt_arch: win64_msvc2022_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps (Qt6 from apt)
+        if: runner.os == 'Linux'
+        # WebEngine packages intentionally omitted — we don't link Qt6::WebEngine*.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            qt6-base-dev \
+            qt6-base-private-dev \
+            qt6-tools-dev \
+            qt6-tools-dev-tools \
+            qt6-l10n-tools \
+            libqt6core5compat6-dev \
+            libxkbcommon-dev
+
+      - name: Install Qt (macOS / Windows)
+        if: runner.os != 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.0'
+          arch: ${{ matrix.qt_arch }}
+          # WebEngine (and its qtwebchannel / qtpositioning siblings) are
+          # intentionally NOT installed. With WebEngine present in the Qt
+          # install, macdeployqt / windeployqt happily bundle the Chromium
+          # frameworks even though clipgrab itself doesn't link them.
+          modules: 'qt5compat'
+          cache: true
+
+      - name: Cache external dependencies
+        uses: actions/cache@v4
+        with:
+          path: external/cache
+          key: ${{ runner.os }}-deps-${{ hashFiles('cmake/PrepareDependencies.cmake') }}
+
+      - name: Prepare dependencies
+        run: cmake -P cmake/PrepareDependencies.cmake
+
+      - name: Configure
+        shell: bash
+        run: |
+          extra=()
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            # ClipGrab.app targets Apple Silicon only.
+            extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+          fi
+          cmake -B build -DCMAKE_BUILD_TYPE=Release "${extra[@]}"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage bundle (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p stage/clipgrab
+          cp build/clipgrab stage/clipgrab/
+
+      - name: Stage bundle (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p stage_universal
+          cp -R build/ClipGrab.app stage_universal/
+          # Pull Qt frameworks into the bundle. Qt 6 macOS binaries are
+          # universal2 (arm64 + x86_64) — we thin to arm64 afterwards.
+          macdeployqt stage_universal/ClipGrab.app -verbose=1
+          # ditto preserves bundle structure but strips x86_64 slices from
+          # every Mach-O file it walks, leaving an arm64-only .app.
+          mkdir -p stage
+          ditto --arch arm64 stage_universal/ClipGrab.app stage/ClipGrab.app
+          cp external/ffmpeg-bin/ffmpeg stage/ClipGrab.app/Contents/MacOS/
+          cp external/deno-bin/deno   stage/ClipGrab.app/Contents/MacOS/
+          chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg \
+                   stage/ClipGrab.app/Contents/MacOS/deno
+
+          # Defensive WebEngine purge: even with WebEngine modules NOT in
+          # the Qt install, belt-and-suspenders nuke anything that still
+          # smells like Chromium. If macdeployqt ever changes behaviour or
+          # someone runs this against a Qt install that has WebEngine, the
+          # bundle still ships clean.
+          find stage/ClipGrab.app -type d -iname '*WebEngine*' -prune -exec rm -rf {} +
+          find stage/ClipGrab.app -type f -iname '*WebEngine*' -delete
+
+          # Strip debug symbols from the staged Mach-O binaries.
+          find stage/ClipGrab.app -type f \( -name '*.dylib' -o -name '*.so' \) \
+            -print0 | xargs -0 strip -x || true
+          strip -x stage/ClipGrab.app/Contents/MacOS/ClipGrab || true
+
+          # Sanity: surface binaries are arm64-only.
+          file stage/ClipGrab.app/Contents/MacOS/ClipGrab \
+               stage/ClipGrab.app/Contents/MacOS/ffmpeg \
+               stage/ClipGrab.app/Contents/MacOS/deno
+
+          # Hard verification: fail the build if any WebEngine residue
+          # made it into the bundle.
+          if find stage/ClipGrab.app -iname '*WebEngine*' | grep -q .; then
+            echo "::error::WebEngine residue found in bundle!"
+            find stage/ClipGrab.app -iname '*WebEngine*'
+            exit 1
+          fi
+
+      - name: Stage bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage/clipgrab | Out-Null
+          # Find clipgrab.exe (CMake/MSVC may put it under build/Release or build/)
+          $exe = Get-ChildItem -Path build -Filter clipgrab.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "clipgrab.exe not found in build/" }
+          Copy-Item $exe.FullName stage/clipgrab/
+          # Pull Qt DLLs + plugins next to the staged exe.
+          windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw stage/clipgrab/clipgrab.exe
+          Copy-Item external/ffmpeg-bin/ffmpeg.exe stage/clipgrab/
+          Copy-Item external/deno-bin/deno.exe   stage/clipgrab/
+
+          # Defensive WebEngine purge — same reasoning as the macOS branch.
+          Get-ChildItem -Path stage/clipgrab -Recurse -Force |
+              Where-Object { $_.Name -match 'WebEngine' } |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Hard verification.
+          $leftover = Get-ChildItem -Path stage/clipgrab -Recurse -Force |
+              Where-Object { $_.Name -match 'WebEngine' }
+          if ($leftover) {
+              Write-Host "::error::WebEngine residue found in bundle!"
+              $leftover | ForEach-Object { Write-Host $_.FullName }
+              exit 1
+          }
+
+      - name: Zip bundle (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd stage
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            zip -ry "../clipgrab-${{ matrix.name }}.zip" ClipGrab.app
+          else
+            zip -r "../clipgrab-${{ matrix.name }}.zip" clipgrab
+          fi
+
+      - name: Zip bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # Git Bash on the Windows runner doesn't ship `zip`; use PowerShell.
+        run: Compress-Archive -Path stage/clipgrab -DestinationPath clipgrab-windows.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipgrab-${{ matrix.name }}
+          path: clipgrab-${{ matrix.name }}.zip
+          if-no-files-found: error
