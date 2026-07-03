@@ -23,10 +23,6 @@
 #include "clipgrab.h"
 #include <algorithm>
 
-#if defined(Q_OS_MAC)
-#include <sys/xattr.h>
-#endif
-
 ClipGrab::ClipGrab()
 {
     //*
@@ -578,14 +574,9 @@ void ClipGrab::updateDownloadFinished()
 
 void ClipGrab::downloadYoutubeDl(bool force) {
     QString minVersion = QSettings().value("minYoutubeDlVersion", "2021.09.25").toString();
-    bool youtubeDlInstalled = !YoutubeDl::find().isEmpty();
-    if (force == false && youtubeDlInstalled) {
-        QString installedVersion = YoutubeDl::getVersion();
-        qDebug() << "Found youtube-dlp " << installedVersion;
-        if (installedVersion >= minVersion) {
-            QSettings().remove("minYoutubeDlVersion");
-            return;
-        }
+    if (force == false && YoutubeDl::isInstalledAndCurrent(minVersion)) {
+        QSettings().remove("minYoutubeDlVersion");
+        return;
     }
     if (QSettings().value("disableYoutubeDlDownload", false).toBool()) return;
 
@@ -602,290 +593,35 @@ void ClipGrab::downloadYoutubeDl(bool force) {
     }
 }
 
-// Parse a SHA2-256SUMS file (lines of "<64hex>  <filename>") and return the
-// SHA256 hex for the requested filename. Returns "" if missing.
-static QString sha256FromSumsFile(const QByteArray& sums, const QString& filename) {
-    const QList<QByteArray> lines = sums.split('\n');
-    for (const QByteArray& raw : lines) {
-        QByteArray line = raw.trimmed();
-        if (line.isEmpty()) continue;
-        // Tolerate either one space or two spaces between hash and name.
-        int sep = line.indexOf(' ');
-        if (sep <= 0) continue;
-        QByteArray hash = line.left(sep);
-        QByteArray name = line.mid(sep).trimmed();
-        if (hash.size() != 64) continue;
-        if (QString::fromUtf8(name) == filename) {
-            return QString::fromUtf8(hash);
-        }
-    }
-    return QString();
-}
-
-// Remove a path whether it's a file, a symlink, or a directory. QDir::exists()
-// returns false for non-directory paths, so a plain QDir::removeRecursively
-// silently does nothing when the install dir is actually a stale file (e.g.
-// the single-file yt-dlp_macos artifact a previous version of this branch
-// downloaded). Returns true if the path is gone afterwards.
-static bool wipePath(const QString& path) {
-    QFileInfo info(path);
-    if (!info.exists() && !info.isSymLink()) return true;
-    if (info.isDir() && !info.isSymLink()) {
-        return QDir(path).removeRecursively();
-    }
-    return QFile::remove(path);
-}
-
-// Extract a yt-dlp onedir zip into <installDir>/, with the actual binary at
-// <installDir>/<binaryName>. We shell out to the platform's bundled archive
-// tool — Qt has no public zip API and we'd rather not add a third-party dep
-// just for this.
-//
-// Both macOS and Windows use `tar` (bsdtar / libarchive), which reads zips
-// out of the box. Avoiding /usr/bin/unzip on macOS sidesteps the InfoZip
-// command being deprecated / removed in recent releases.
-//
-// `errorOut` receives a human-readable failure reason on error. Returns the
-// absolute path to the extracted binary on success, "" otherwise (in which
-// case all temp / partial state is wiped).
-static QString extractYoutubeDlBundle(const QString& zipPath, const QString& installDir,
-                                      const QString& binaryName, QString* errorOut) {
-    auto fail = [&](const QString& msg) {
-        if (errorOut) *errorOut = msg;
-        wipePath(installDir);
-        wipePath(installDir + ".extract");
-        return QString();
-    };
-
-    // Wipe any previous install so we don't end up with a half-overlay.
-    if (!wipePath(installDir)) {
-        return fail(QStringLiteral("could not remove existing install at %1").arg(installDir));
-    }
-    if (!QDir().mkpath(installDir)) {
-        return fail(QStringLiteral("could not create install dir %1").arg(installDir));
-    }
-
-    const QString tmpDir = installDir + ".extract";
-    if (!wipePath(tmpDir) || !QDir().mkpath(tmpDir)) {
-        return fail(QStringLiteral("could not prepare temp dir %1").arg(tmpDir));
-    }
-
-    // bsdtar ships with both Windows (10 1803+) and macOS, reads zip via
-    // -xf, and accepts forward-slash paths on either platform.
-    QProcess tar;
-    tar.setProgram("tar");
-    tar.setArguments(QStringList() << "-xf" << zipPath << "-C" << tmpDir);
-    tar.start();
-    if (!tar.waitForStarted(5000)) {
-        return fail(QStringLiteral("could not start tar: %1").arg(tar.errorString()));
-    }
-    if (!tar.waitForFinished(120000)) {
-        tar.kill();
-        return fail(QStringLiteral("tar did not finish within 120s"));
-    }
-    if (tar.exitStatus() != QProcess::NormalExit || tar.exitCode() != 0) {
-        const QString stderr_ = QString::fromLocal8Bit(tar.readAllStandardError()).trimmed();
-        return fail(QStringLiteral("tar exited with %1: %2")
-                    .arg(tar.exitCode())
-                    .arg(stderr_.isEmpty() ? QStringLiteral("(no stderr)") : stderr_));
-    }
-
-    // PyInstaller's onedir layout is <bundle-root>/<binaryName>+_internal/.
-    // yt-dlp's CI ships the zip with the bundle-root as the top-level entry,
-    // but we glob for it defensively so naming changes don't break us.
-    QDirIterator it(tmpDir, QStringList() << binaryName,
-                    QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    if (!it.hasNext()) {
-        return fail(QStringLiteral("extracted zip did not contain %1 under %2")
-                    .arg(binaryName, tmpDir));
-    }
-    const QString foundBinary = it.next();
-    const QString bundleRoot = QFileInfo(foundBinary).absolutePath();
-
-    // Move bundle-root contents into installDir.
-    QDir src(bundleRoot);
-    for (const QString& entry : src.entryList(QDir::AllEntries | QDir::Hidden | QDir::NoDotAndDotDot)) {
-        if (!QFile::rename(bundleRoot + "/" + entry, installDir + "/" + entry)) {
-            return fail(QStringLiteral("failed to move %1 from extract dir to install dir")
-                        .arg(entry));
-        }
-    }
-    wipePath(tmpDir);
-    return installDir + "/" + binaryName;
-}
-
 void ClipGrab::startYoutubeDlDownload() {
     this->helperDownloaderDialog->setDisabled(true);
 
-    // Per-OS release asset: yt-dlp_macos.zip / yt-dlp_win.zip onedir
-    // bundles (or, on Linux, the plain yt-dlp script).
-    const QString assetName = YoutubeDl::expectedReleaseAssetName();
-    const QString installDir = YoutubeDl::installDir();
-    const QString binaryName = YoutubeDl::bundledBinaryName();
-    const bool isArchive = assetName.endsWith(".zip");
+    // The downloader owns the network + filesystem flow; this call site only
+    // wires its progress into the helper UI and reacts to the outcome.
+    YoutubeDlDownloader* downloader = new YoutubeDlDownloader(this);
 
-    // For Linux we drop the script directly into installDir (which equals
-    // the AppData root). For macOS/Windows the downloaded artifact is a
-    // zip — stash it in the AppData root so we can clean it up after
-    // extraction; extractYoutubeDlBundle (re)creates installDir itself.
-    const QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(downloadDir);
-    const QString partialPath = downloadDir + "/" + assetName + ".partial";
-
-    const QString baseUrl = settings.value(
-        "youtubeDlBaseUrl",
-        "https://github.com/yt-dlp/yt-dlp/releases/latest/download/").toString();
-    const QUrl sumsUrl(baseUrl + "SHA2-256SUMS");
-    const QUrl binaryUrl(baseUrl + assetName);
-
-    QNetworkAccessManager* nam = new QNetworkAccessManager(this);
-
-    // Step 1: fetch SHA2-256SUMS so we know what the artifact should hash
-    // to. Both this and the artifact download go through GitHub HTTPS — the
-    // SHA check catches CDN tampering / mid-download corruption; the
-    // GPG-signed SHA2-256SUMS.sig would catch a source compromise but
-    // verifying that requires an OpenPGP library Qt doesn't ship.
-    QNetworkReply* sumsReply = nam->get(QNetworkRequest(sumsUrl));
-    connect(sumsReply, &QNetworkReply::finished, this, [=, this] {
-        sumsReply->deleteLater();
-        if (sumsReply->error() != QNetworkReply::NoError) {
-            errorHandler(tr("Could not download SHA2-256SUMS: %1").arg(sumsReply->errorString()));
-            QApplication::quit();
-            return;
-        }
-
-        const QString expectedSha = sha256FromSumsFile(sumsReply->readAll(), assetName);
-        if (expectedSha.isEmpty()) {
-            errorHandler(tr("SHA2-256SUMS does not contain an entry for %1").arg(assetName));
-            QApplication::quit();
-            return;
-        }
-
-        // Step 2: download the artifact into a .partial file so we never
-        // leave a half-written executable / zip behind.
-        QFile* tempFile = new QFile(partialPath);
-        if (!tempFile->open(QFile::WriteOnly | QFile::Truncate)) {
-            errorHandler(tr("Unable to write to %1").arg(tempFile->fileName()));
-            tempFile->deleteLater();
-            QApplication::quit();
-            return;
-        }
-
-        QNetworkReply* reply = nam->get(QNetworkRequest(binaryUrl));
-
-        connect(reply, &QNetworkReply::readyRead, this, [=] {
-            tempFile->write(reply->readAll());
-        });
-        connect(reply, &QNetworkReply::downloadProgress, this,
-                [=](qint64 bytesReceived, qint64 bytesTotal) {
-            this->helperDownloaderUi->progressBar->setMaximum(bytesTotal);
-            this->helperDownloaderUi->progressBar->setValue(bytesReceived);
-        });
-        connect(reply, &QNetworkReply::sslErrors, this, [=](QList<QSslError> errors) {
-            for (const QSslError& e : errors) {
-                errorHandler(tr("SSL error: %1\n%2 %3").arg(
-                    e.errorString(),
-                    e.certificate().issuerDisplayName(),
-                    e.certificate().subjectDisplayName()));
-            }
-        });
-        connect(reply, &QNetworkReply::finished, this, [=, this] {
-            reply->deleteLater();
-            tempFile->close();
-
-            if (reply->error() != QNetworkReply::NoError) {
-                tempFile->remove();
-                tempFile->deleteLater();
-                errorHandler(tr("Error downloading %1: %2").arg(assetName, reply->errorString()));
-                QApplication::quit();
-                return;
-            }
-
-            // Step 3: verify the SHA-256 of the downloaded artifact against
-            // the sums file entry.
-            QCryptographicHash hash(QCryptographicHash::Sha256);
-            if (!tempFile->open(QFile::ReadOnly)) {
-                errorHandler(tr("Could not re-open %1 for hashing").arg(tempFile->fileName()));
-                tempFile->remove();
-                tempFile->deleteLater();
-                QApplication::quit();
-                return;
-            }
-            hash.addData(tempFile);
-            tempFile->close();
-            const QString actualSha = QString::fromLatin1(hash.result().toHex());
-            if (actualSha.compare(expectedSha, Qt::CaseInsensitive) != 0) {
-                tempFile->remove();
-                tempFile->deleteLater();
-                errorHandler(tr(
-                    "Downloaded %1 failed SHA-256 verification.\n"
-                    "Expected: %2\nGot:      %3\n"
-                    "This usually means GitHub published a newer release between "
-                    "the SHA2-256SUMS fetch and the artifact fetch — please retry."
-                    ).arg(assetName, expectedSha, actualSha));
-                QApplication::quit();
-                return;
-            }
-
-            // Step 4a (Linux): the artifact IS the script. Move it into
-            // place and make it executable.
-            // Step 4b (macOS/Windows): the artifact is a onedir zip;
-            // extract it into installDir/ and discard the zip.
-            QString finalBinaryPath;
-            if (isArchive) {
-                QString extractError;
-                finalBinaryPath = extractYoutubeDlBundle(
-                    partialPath, installDir, binaryName, &extractError);
-                tempFile->remove();   // drop the .zip; we have the extracted tree now
-                tempFile->deleteLater();
-                if (finalBinaryPath.isEmpty()) {
-                    errorHandler(tr("Failed to extract %1 into %2:\n%3")
-                                 .arg(assetName, installDir, extractError));
-                    QApplication::quit();
-                    return;
-                }
-            } else {
-                finalBinaryPath = installDir + "/" + binaryName;
-                QFile::remove(finalBinaryPath);
-                if (!tempFile->rename(finalBinaryPath)) {
-                    errorHandler(tr("Could not move %1 to %2: %3").arg(
-                        tempFile->fileName(), finalBinaryPath, tempFile->errorString()));
-                    QApplication::quit();
-                    return;
-                }
-                tempFile->deleteLater();
-            }
-
-            #if !defined(Q_OS_WIN)
-                QFile::setPermissions(finalBinaryPath,
-                    QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
-                    | QFile::ReadGroup | QFile::ExeGroup
-                    | QFile::ReadOther | QFile::ExeOther);
-            #endif
-            #if defined(Q_OS_MAC)
-                // QNetworkAccessManager writes via plain POSIX write(2) so
-                // the file typically isn't quarantined to begin with, but
-                // strip the xattr defensively in case some future Qt /
-                // macOS combination starts adding it. removexattr is the
-                // documented Darwin syscall.
-                ::removexattr(finalBinaryPath.toUtf8().constData(),
-                              "com.apple.quarantine", XATTR_NOFOLLOW);
-            #endif
-
-            this->helperDownloaderDialog->accept();
-            emit youtubeDlDownloadFinished();
-        });
+    connect(downloader, &YoutubeDlDownloader::progress, this,
+            [this](qint64 received, qint64 total) {
+        this->helperDownloaderUi->progressBar->setMaximum(total);
+        this->helperDownloaderUi->progressBar->setValue(received);
     });
+    connect(downloader, &YoutubeDlDownloader::failed, this,
+            [this, downloader](const QString& message) {
+        downloader->deleteLater();
+        errorHandler(message);
+        QApplication::quit();
+    });
+    connect(downloader, &YoutubeDlDownloader::succeeded, this, [this, downloader] {
+        downloader->deleteLater();
+        this->helperDownloaderDialog->accept();
+        emit youtubeDlDownloadFinished();
+    });
+
+    downloader->start();
 }
 
 void ClipGrab::updateYoutubeDl() {
-    if (QSettings().value("disableYoutubeDlUpdate", false).toBool()) return;
-    youtubeDlUpdateProcess = YoutubeDl::instance(QStringList() << "--update");
-    youtubeDlUpdateProcess->start();
-    connect(youtubeDlUpdateProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), [=] {
-        youtubeDlUpdateProcess->deleteLater();
-        youtubeDlUpdateProcess = nullptr;
-    });
+    YoutubeDl::startUpdate();
 }
 
 void ClipGrab::skipUpdate()

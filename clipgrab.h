@@ -163,7 +163,6 @@ class ClipGrab : public QObject
         video* currentVideo;
         video* currentSearch;
         QString youtubeDlPath;
-        QProcess *youtubeDlUpdateProcess;
 
     public slots:
         void errorHandler(QString);
