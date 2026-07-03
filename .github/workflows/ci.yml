@@ -19,7 +19,11 @@ jobs:
           - name: linux
             os: ubuntu-latest
           - name: macos
-            os: macos-latest
+            # Pinned instead of macos-latest: the -latest pool is mid-migration
+            # to images whose default Xcode 26 SDK dropped AGL.framework, which
+            # Qt 6.9's prebuilt QtGui still links (-framework AGL). Runs were
+            # green or red depending on which image the job landed on.
+            os: macos-15
             qt_arch: clang_64
           - name: windows
             os: windows-latest
@@ -57,17 +61,19 @@ jobs:
           # frameworks even though clipgrab itself doesn't link them.
           cache: true
 
-      - name: Workaround missing AGL framework (macos-14+ SDK)
+      - name: Select Xcode 16 (SDK still ships AGL)
         if: runner.os == 'macOS'
-        # Apple removed /System/Library/Frameworks/AGL.framework starting
-        # with the macOS 14 SDK that ships on the macos-latest runner. Qt
-        # 6.9.0's QtGui link interface still lists "-framework AGL" for
-        # legacy OpenGL support, so the link step fails with
-        #   ld: framework 'AGL' not found
-        # AGL was always a thin wrapper around the system OpenGL framework
-        # (itself deprecated but still present), so pointing AGL at OpenGL
-        # via a symlink resolves both the lookup and the runtime call paths.
-        run: sudo ln -sf /System/Library/Frameworks/OpenGL.framework /Library/Frameworks/AGL.framework
+        # Qt 6.9's binaries reference -framework AGL, which Apple removed
+        # from the SDK as of Xcode 26. Pin the newest Xcode 16.x on the
+        # image so the macOS 15 SDK (which still has the AGL stub) is used
+        # even if the image's default Xcode moves forward. Building against
+        # the older SDK doesn't hurt forward compatibility, and the
+        # deployment target (set at configure) governs the backward floor.
+        run: |
+          ls -d /Applications/Xcode_16*.app
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          xcrun --show-sdk-path
+          xcrun --show-sdk-version
 
       - name: Cache external dependencies
         uses: actions/cache@v4
@@ -83,8 +89,11 @@ jobs:
         run: |
           extra=()
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            # ClipGrab.app targets Apple Silicon only.
+            # ClipGrab.app targets Apple Silicon only. Deployment target 12.0
+            # matches Qt 6.9's own minimum, so the app runs on every macOS
+            # release Qt 6.9 supports.
             extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+            extra+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
           fi
           cmake -B build -DCMAKE_BUILD_TYPE=Release "${extra[@]}"
 
