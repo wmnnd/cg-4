@@ -670,32 +670,23 @@ static QString extractYoutubeDlBundle(const QString& zipPath, const QString& ins
         return fail(QStringLiteral("could not prepare temp dir %1").arg(tmpDir));
     }
 
-    QProcess unzip;
-    QStringList args;
-    #if defined(Q_OS_WIN)
-        unzip.setProgram("tar");
-        args << "-xf" << QDir::toNativeSeparators(zipPath)
-             << "-C" << QDir::toNativeSeparators(tmpDir);
-    #else
-        // bsdtar (libarchive) on macOS handles zip via -xf.
-        unzip.setProgram("/usr/bin/tar");
-        args << "-xf" << zipPath << "-C" << tmpDir;
-    #endif
-    unzip.setArguments(args);
-    unzip.start();
-    if (!unzip.waitForStarted(5000)) {
-        return fail(QStringLiteral("could not start %1: %2")
-                    .arg(unzip.program(), unzip.errorString()));
+    // bsdtar ships with both Windows (10 1803+) and macOS, reads zip via
+    // -xf, and accepts forward-slash paths on either platform.
+    QProcess tar;
+    tar.setProgram("tar");
+    tar.setArguments(QStringList() << "-xf" << zipPath << "-C" << tmpDir);
+    tar.start();
+    if (!tar.waitForStarted(5000)) {
+        return fail(QStringLiteral("could not start tar: %1").arg(tar.errorString()));
     }
-    if (!unzip.waitForFinished(120000)) {
-        unzip.kill();
-        return fail(QStringLiteral("%1 did not finish within 120s").arg(unzip.program()));
+    if (!tar.waitForFinished(120000)) {
+        tar.kill();
+        return fail(QStringLiteral("tar did not finish within 120s"));
     }
-    if (unzip.exitStatus() != QProcess::NormalExit || unzip.exitCode() != 0) {
-        const QString stderr_ = QString::fromLocal8Bit(unzip.readAllStandardError()).trimmed();
-        return fail(QStringLiteral("%1 exited with %2: %3")
-                    .arg(unzip.program())
-                    .arg(unzip.exitCode())
+    if (tar.exitStatus() != QProcess::NormalExit || tar.exitCode() != 0) {
+        const QString stderr_ = QString::fromLocal8Bit(tar.readAllStandardError()).trimmed();
+        return fail(QStringLiteral("tar exited with %1: %2")
+                    .arg(tar.exitCode())
                     .arg(stderr_.isEmpty() ? QStringLiteral("(no stderr)") : stderr_));
     }
 
@@ -733,11 +724,10 @@ void ClipGrab::startYoutubeDlDownload() {
     const QString binaryName = YoutubeDl::bundledBinaryName();
     const bool isArchive = assetName.endsWith(".zip");
 
-    QDir().mkpath(installDir);
-
-    // For Linux we drop the script directly into installDir.
-    // For macOS/Windows the downloaded artifact is a zip — stash it in the
-    // AppData root so we can clean it up after extraction.
+    // For Linux we drop the script directly into installDir (which equals
+    // the AppData root). For macOS/Windows the downloaded artifact is a
+    // zip — stash it in the AppData root so we can clean it up after
+    // extraction; extractYoutubeDlBundle (re)creates installDir itself.
     const QString downloadDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(downloadDir);
     const QString partialPath = downloadDir + "/" + assetName + ".partial";
@@ -780,7 +770,6 @@ void ClipGrab::startYoutubeDlDownload() {
             QApplication::quit();
             return;
         }
-        this->youtubeDlFile = tempFile;
 
         QNetworkReply* reply = nam->get(QNetworkRequest(binaryUrl));
 
@@ -817,6 +806,8 @@ void ClipGrab::startYoutubeDlDownload() {
             QCryptographicHash hash(QCryptographicHash::Sha256);
             if (!tempFile->open(QFile::ReadOnly)) {
                 errorHandler(tr("Could not re-open %1 for hashing").arg(tempFile->fileName()));
+                tempFile->remove();
+                tempFile->deleteLater();
                 QApplication::quit();
                 return;
             }
@@ -881,7 +872,6 @@ void ClipGrab::startYoutubeDlDownload() {
                               "com.apple.quarantine", XATTR_NOFOLLOW);
             #endif
 
-            this->youtubeDlFile = nullptr;
             this->helperDownloaderDialog->accept();
             emit youtubeDlDownloadFinished();
         });

@@ -815,15 +815,15 @@ void MainWindow::dropEvent(QDropEvent *event)
 }
 
 void MainWindow::updateYoutubeDlVersionInfo() {
-    QString youtubeDlVersion = YoutubeDl::getVersion();
-    QString pythonVersion = YoutubeDl::getPythonVersion();
-    QString youtubeDlPath = YoutubeDl::find();
+    QString label = tr("yt-dlp: %1 (%2)")
+            .arg(YoutubeDl::find(), YoutubeDl::getVersion());
+    // Only Linux runs yt-dlp through an external interpreter; on
+    // macOS/Windows Python is baked into the yt-dlp bundle.
     QString pythonPath = YoutubeDl::findPython();
-    QString label = tr("youtube-dlp: %1 (%2)\nPython: %3 (%4)")
-            .arg(youtubeDlPath)
-            .arg(youtubeDlVersion)
-            .arg(pythonPath)
-            .arg(pythonVersion);
+    if (!pythonPath.isEmpty()) {
+        label += "\n" + tr("Python: %1 (%2)")
+                .arg(pythonPath, YoutubeDl::getPythonVersion());
+    }
     ui.labelYoutubeDlVersionInfo->setText(label);
 };
 

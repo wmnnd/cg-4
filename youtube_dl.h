@@ -28,7 +28,6 @@ public:
     static QString installDir();
 
     static QString path;
-    static QString pythonCaFile;
 };
 
 #endif // YOUTUBEDL_H

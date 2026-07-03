@@ -159,7 +159,6 @@ class ClipGrab : public QObject
         QTemporaryFile* updateFile;
         QDialog* helperDownloaderDialog;
         Ui::HelperDownloader* helperDownloaderUi;
-        QFile* youtubeDlFile;
         QNetworkReply* updateReply;
         video* currentVideo;
         video* currentSearch;

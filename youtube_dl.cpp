@@ -6,7 +6,6 @@ YoutubeDl::YoutubeDl()
 }
 
 QString YoutubeDl::path = QString();
-QString YoutubeDl::pythonCaFile = QString();
 
 QString YoutubeDl::expectedReleaseAssetName() {
 #if defined(Q_OS_WIN)
@@ -87,20 +86,13 @@ QProcess* YoutubeDl::instance(QString path, QStringList arguments) {
 
     QString execPath = QCoreApplication::applicationDirPath();
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    QStringList finalArgs;
 
+    // Put execPath (bundled ffmpeg / deno) on PATH for the spawned yt-dlp;
+    // on macOS also add the usual Homebrew / system bin dirs so a JS
+    // runtime (deno / node) is found when the YouTube extractor needs it.
     #if defined(Q_OS_WIN)
-        // yt-dlp.exe is a PyInstaller bundle — spawn it directly, no Python
-        // wrapper. execPath stays on PATH so the bundled ffmpeg.exe / deno.exe
-        // are reachable when yt-dlp shells out.
         env.insert("PATH", QDir::toNativeSeparators(execPath) + ";" + env.value("PATH"));
-        process->setProgram(path);
-        finalArgs = arguments;
     #elif defined(Q_OS_MAC)
-        // yt-dlp_macos is a PyInstaller bundle. Augment PATH with execPath
-        // (bundled ffmpeg / deno) and the usual Homebrew / system bin dirs
-        // so the JavaScript runtime (deno / node) is found when the YouTube
-        // extractor needs it.
         QStringList pathParts;
         pathParts << execPath
                   << "/opt/homebrew/bin"
@@ -109,13 +101,17 @@ QProcess* YoutubeDl::instance(QString path, QStringList arguments) {
                   << "/usr/local/sbin"
                   << env.value("PATH");
         env.insert("PATH", pathParts.join(":"));
-        process->setProgram(path);
-        finalArgs = arguments;
     #else
-        // Linux: keep running the .py script through the system Python.
         env.insert("PATH", execPath + ":" + env.value("PATH"));
+    #endif
+
+    // macOS/Windows spawn the self-contained PyInstaller bundle directly;
+    // Linux still runs the .py script through the system Python.
+    #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
+        process->setProgram(path);
+    #else
         process->setProgram(QStandardPaths::findExecutable("python3"));
-        finalArgs = QStringList() << path << arguments;
+        arguments.prepend(path);
     #endif
 
     QSettings settings;
@@ -144,8 +140,8 @@ QProcess* YoutubeDl::instance(QString path, QStringList arguments) {
         networkArguments << "--force-ipv4";
     }
 
-    finalArgs << proxyArguments << networkArguments;
-    process->setArguments(finalArgs);
+    arguments << proxyArguments << networkArguments;
+    process->setArguments(arguments);
     process->setWorkingDirectory(QDir::tempPath());
     process->setProcessEnvironment(env);
 
@@ -168,13 +164,12 @@ QString YoutubeDl::getPythonVersion() {
     #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
         return QString();
     #else
-        QProcess* python = new QProcess();
-        python->setProgram(QStandardPaths::findExecutable("python3"));
-        python->setArguments(QStringList("--version"));
-        python->start();
-        python->waitForFinished(10000);
-        QString version = python->readAllStandardOutput() + python->readAllStandardError();
-        python->deleteLater();
+        QProcess python;
+        python.setProgram(QStandardPaths::findExecutable("python3"));
+        python.setArguments(QStringList("--version"));
+        python.start();
+        python.waitForFinished(10000);
+        QString version = python.readAllStandardOutput() + python.readAllStandardError();
         return version.replace("\n", "");
     #endif
 }
