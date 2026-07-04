@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Entitlements for the bundled `deno` binary. deno embeds V8, which
+        JITs, so under the hardened runtime it needs both the JIT entitlement
+        and the unsigned-executable-memory exception or it crashes on launch.
+        These apply to deno's OWN signature only — the app does not get them.
+    -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+</dict>
+</plist>
