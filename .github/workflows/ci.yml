@@ -17,7 +17,11 @@ jobs:
       matrix:
         include:
           - name: linux
-            os: ubuntu-latest
+            # Oldest hosted runner (20.04 was retired in 2025) → glibc 2.35,
+            # so the AppImage runs on essentially every currently-supported
+            # distro. Qt comes from apt (6.2.4 on jammy), which the app builds
+            # against fine; the bundled AppImage carries those Qt libs along.
+            os: ubuntu-22.04
           - name: macos
             # Pinned instead of macos-latest: the -latest pool is mid-migration
             # to images whose default Xcode 26 SDK dropped AGL.framework, which
