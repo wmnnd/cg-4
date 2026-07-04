@@ -135,8 +135,10 @@ jobs:
 
           # AppImage: install into an AppDir, let linuxdeploy pull in Qt + deps.
           cmake --install build --prefix AppDir/usr
-          # linuxdeploy wants the icon stem to match the desktop file's Icon=.
-          cp icon.png clipgrab.png
+          # linuxdeploy wants the icon stem to match the desktop file's Icon=
+          # and only accepts standard square sizes — icon.png is 80x80, so
+          # resize to 256x256.
+          convert icon.png -resize 256x256 clipgrab.png
 
           curl -sSL -o linuxdeploy.AppImage \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
