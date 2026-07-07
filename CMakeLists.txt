@@ -1,3 +1,4 @@
+# 3.16 is the minimum Qt 6 supports (and documents) for its CMake API.
 cmake_minimum_required(VERSION 3.16)
 
 set(CLIPGRAB_VERSION 3.9.14)
@@ -6,6 +7,9 @@ project(clipgrab VERSION ${CLIPGRAB_VERSION} LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# These three are exactly what qt_standard_project_setup() would turn on. We
+# set them by hand rather than call that helper because it requires Qt 6.3+
+# and the Linux CI builds against distro Qt 6.2 — this form works everywhere.
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
@@ -125,6 +129,10 @@ target_link_libraries(clipgrab PRIVATE
     Qt6::Xml
 )
 
+# GUI app: build against the Windows GUI subsystem so no console window opens.
+# (Ignored on other platforms.)
+set_target_properties(clipgrab PROPERTIES WIN32_EXECUTABLE TRUE)
+
 if(APPLE)
     set_target_properties(clipgrab PROPERTIES
         MACOSX_BUNDLE TRUE
@@ -142,14 +150,18 @@ qt_add_translations(clipgrab TS_FILES ${CLIPGRAB_TS_FILES})
 #   cmake --build build --target prepare-dependencies
 # Standalone equivalent (no configure step needed):
 #   cmake -P cmake/PrepareDependencies.cmake
-add_custom_target(prepare-dependencies
-    COMMAND ${CMAKE_COMMAND}
-        -DEXTERNAL_DIR=${CMAKE_SOURCE_DIR}/external
-        -P ${CMAKE_SOURCE_DIR}/cmake/PrepareDependencies.cmake
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMENT "Fetching ffmpeg / deno runtime dependencies"
-    VERBATIM
-)
+# Guarded because that script is a private packaging file: it's absent from
+# the scrubbed open-source tree, and a plain source build never needs it.
+if(EXISTS "${CMAKE_SOURCE_DIR}/cmake/PrepareDependencies.cmake")
+    add_custom_target(prepare-dependencies
+        COMMAND ${CMAKE_COMMAND}
+            -DEXTERNAL_DIR=${CMAKE_SOURCE_DIR}/external
+            -P ${CMAKE_SOURCE_DIR}/cmake/PrepareDependencies.cmake
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Fetching ffmpeg / deno runtime dependencies"
+        VERBATIM
+    )
+endif()
 
 install(TARGETS clipgrab
     BUNDLE DESTINATION .
