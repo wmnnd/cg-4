@@ -218,12 +218,6 @@ jobs:
         if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
         run: bash packaging/macos/sign-app.sh stage/ClipGrab.app "${{ secrets.MACOS_SIGN_IDENTITY }}"
 
-      - name: Zip .app (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          mkdir -p dist
-          ditto -c -k --keepParent stage/ClipGrab.app dist/clipgrab-macos.zip
-
       - name: Notarize + staple .app (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_notarize == 'true'
         env:
@@ -240,11 +234,15 @@ jobs:
             echo "$NOTARY_KEY" | base64 --decode > notary.p8
             export NOTARY_KEY_PATH="$PWD/notary.p8"
           fi
-          # Submit the zip; staple the .app inside `stage`, then re-zip so the
-          # published zip carries the stapled ticket.
-          bash packaging/macos/notarize.sh dist/clipgrab-macos.zip stage/ClipGrab.app
-          rm -f dist/clipgrab-macos.zip notary.p8
-          ditto -c -k --keepParent stage/ClipGrab.app dist/clipgrab-macos.zip
+          # notarytool can't submit a raw .app, so zip it to a throwaway
+          # container purely for submission, then staple the ticket to the
+          # .app in `stage`. We ship the .dmg (built from and notarized around
+          # this stapled .app), so both the app and the .dmg end up notarized —
+          # no distributable .zip is produced.
+          submit_zip="$RUNNER_TEMP/notarize-app.zip"
+          ditto -c -k --keepParent stage/ClipGrab.app "$submit_zip"
+          bash packaging/macos/notarize.sh "$submit_zip" stage/ClipGrab.app
+          rm -f "$submit_zip" notary.p8
 
       - name: Install create-dmg (macOS)
         if: runner.os == 'macOS'
@@ -274,7 +272,12 @@ jobs:
             --format UDBZ
           )
           if [[ -f packaging/macos/dmg-background.png ]]; then
-            args+=(--background packaging/macos/dmg-background.png)
+            # The committed background may be saved in another raster format
+            # (e.g. TIFF) despite the .png name; normalize to a real PNG via
+            # sips so Finder / create-dmg always get a valid image.
+            bg="$(mktemp -d)/dmg-background.png"
+            sips -s format png packaging/macos/dmg-background.png --out "$bg" >/dev/null
+            args+=(--background "$bg")
           else
             echo "::warning::packaging/macos/dmg-background.png missing — building an unstyled DMG. Commit the background to enable it."
           fi
@@ -375,6 +378,8 @@ jobs:
 
       # ====================================================================
       # Upload everything this job produced (raw bundle + installer/dmg).
+      # macOS emits just the .dmg; Linux/Windows emit the raw bundle
+      # (+ installer, where built).
       # ====================================================================
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
