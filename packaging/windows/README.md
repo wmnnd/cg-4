@@ -57,17 +57,36 @@ CI still builds and uploads unsigned `.zip` / `.app` / `.exe` / raw artifacts.
 
 ## macOS (code signing + notarization)
 
+**Signing** (Developer ID Application certificate):
+
 | Secret                        | What it is                                                    |
 |-------------------------------|---------------------------------------------------------------|
 | `MACOS_CERTIFICATE_P12`       | base64 of the Developer ID Application cert (`.p12`).         |
 | `MACOS_CERTIFICATE_PASSWORD`  | password for that `.p12`.                                     |
 | `MACOS_SIGN_IDENTITY`         | e.g. `Developer ID Application: Your Name (TEAMID)`.          |
+
+**Notarization** — provide **one** of the two credential sets below (the CI
+auto-detects which one is present; the API key wins if both are set):
+
+*Option A — App Store Connect API key* (a Team Key; preferred for automation):
+
+| Secret                        | What it is                                                    |
+|-------------------------------|---------------------------------------------------------------|
 | `MACOS_NOTARY_KEY`            | base64 of the App Store Connect API key (`.p8`).             |
-| `MACOS_NOTARY_KEY_ID`         | the API key ID.                                               |
+| `MACOS_NOTARY_KEY_ID`         | the API key ID (10-char).                                     |
 | `MACOS_NOTARY_ISSUER_ID`      | the API key issuer UUID.                                       |
 
-Signing needs the first three; notarization additionally needs the last three.
-Signing without notarization is supported (the app is signed but not stapled).
+*Option B — Apple ID + app-specific password* (no API-key enrollment needed):
+
+| Secret                        | What it is                                                    |
+|-------------------------------|---------------------------------------------------------------|
+| `MACOS_NOTARY_APPLE_ID`       | the developer account email.                                  |
+| `MACOS_NOTARY_APP_PASSWORD`   | an app-specific password (appleid.apple.com → Sign-In and Security). |
+| `MACOS_NOTARY_TEAM_ID`        | the 10-char Developer Team ID.                                |
+
+Signing needs the three signing secrets; notarization additionally needs one
+of the two credential sets. Signing without notarization is supported (the app
+is signed but not stapled).
 
 ## Windows (code signing)
 

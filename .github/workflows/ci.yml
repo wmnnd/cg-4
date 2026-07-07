@@ -45,11 +45,17 @@ jobs:
         shell: bash
         env:
           MAC_CERT: ${{ secrets.MACOS_CERTIFICATE_P12 }}
-          MAC_NOTARY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MAC_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MAC_NOTARY_APPLEID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
           WIN_CERT: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
         run: |
           echo "mac_sign=$([[ -n "$MAC_CERT" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          echo "mac_notarize=$([[ -n "$MAC_NOTARY" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # Notarization needs EITHER the API key OR the Apple-ID credential set.
+          if [[ -n "$MAC_NOTARY_KEY" || -n "$MAC_NOTARY_APPLEID" ]]; then
+            echo "mac_notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mac_notarize=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "win_sign=$([[ -n "$WIN_CERT" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Install Linux build deps (Qt6 from apt)
@@ -221,17 +227,24 @@ jobs:
       - name: Notarize + staple .app (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_notarize == 'true'
         env:
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
         run: |
-          echo "${{ secrets.MACOS_NOTARY_KEY }}" | base64 --decode > notary.p8
-          export NOTARY_KEY_PATH="$PWD/notary.p8"
+          # API-key auth needs the .p8 on disk; app-specific-password auth
+          # doesn't. notarize.sh picks whichever credential set is present.
+          if [[ -n "$NOTARY_KEY" ]]; then
+            echo "$NOTARY_KEY" | base64 --decode > notary.p8
+            export NOTARY_KEY_PATH="$PWD/notary.p8"
+          fi
           # Submit the zip; staple the .app inside `stage`, then re-zip so the
           # published zip carries the stapled ticket.
           bash packaging/macos/notarize.sh dist/clipgrab-macos.zip stage/ClipGrab.app
-          rm -f dist/clipgrab-macos.zip
+          rm -f dist/clipgrab-macos.zip notary.p8
           ditto -c -k --keepParent stage/ClipGrab.app dist/clipgrab-macos.zip
-          rm -f notary.p8
 
       - name: Build DMG (macOS)
         if: runner.os == 'macOS'
@@ -251,11 +264,17 @@ jobs:
       - name: Notarize + staple DMG (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_notarize == 'true'
         env:
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
         run: |
-          echo "${{ secrets.MACOS_NOTARY_KEY }}" | base64 --decode > notary.p8
-          export NOTARY_KEY_PATH="$PWD/notary.p8"
+          if [[ -n "$NOTARY_KEY" ]]; then
+            echo "$NOTARY_KEY" | base64 --decode > notary.p8
+            export NOTARY_KEY_PATH="$PWD/notary.p8"
+          fi
           bash packaging/macos/notarize.sh dist/clipgrab-macos.dmg
           rm -f notary.p8
 
