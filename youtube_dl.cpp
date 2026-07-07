@@ -45,14 +45,19 @@ QString YoutubeDl::bundledBinaryName() {
 QString YoutubeDl::installDir() {
     QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
-    // Deliberately NOT "<AppData>/yt-dlp": released 3.9.x downloads the plain
-    // yt-dlp *script* to the file "<AppData>/yt-dlp" (see the old
+    // Deliberately NOT the bare "<AppData>/yt-dlp": released 3.9.x downloads
+    // the plain yt-dlp *script* to that file (see the old
     // ClipGrab::startYoutubeDlDownload → QFile(dir + "/yt-dlp")). Extracting
     // the onedir bundle into a directory of that same name would clobber that
     // file, and — worse — leave a directory where a user who downgrades to an
-    // older build expects to read/write a file, breaking it. Use a separate
-    // directory so both installs coexist and downgrades keep working.
-    return base + "/yt-dlp-bundle";
+    // older build expects to read/write a file, breaking it. Name the dir
+    // after the release asset plus the build architecture (e.g.
+    // "yt-dlp_macos_arm64", "yt-dlp_win_x86_64"), mirroring the download name:
+    // it never collides with the old path, and distinct-arch installs never
+    // share a bundle.
+    QString asset = expectedReleaseAssetName();   // e.g. "yt-dlp_macos.zip"
+    if (asset.endsWith(".zip")) asset.chop(4);
+    return base + "/" + asset + "_" + QSysInfo::buildCpuArchitecture();
 #else
     // Linux keeps the single-file script at "<AppData>/yt-dlp", exactly where
     // older releases put it, so old and new builds share it compatibly.
