@@ -33,21 +33,24 @@ constexpr int kPeriodMs = 555;
 // ClipGrab cyan (#00b4de) — the dot colour the CSS version used.
 const QColor kDotColor(0x00, 0xb4, 0xde);
 
-// The CSS dots eased with timing-function cubic-bezier(0, 1, 1, 0). For those
-// control points P1=(0,1), P2=(1,0) the parametric Bézier reduces to
-//   x(s) = 3s² − 2s³   (monotonic on [0,1]; this is smoothstep)
-//   y(s) = 3s − 6s² + 4s³
-// so we recover s from x(s)=t by bisection, then evaluate y(s) as the eased
-// progress. 24 steps put us well under a pixel of error.
+// The reference APNG eases each cycle with a strong ease-out — measured as
+// cubic-bezier(0.011, 0.540, 0.533, 0.964): the growing/sliding dots snap most
+// of the way to their next resting spots early, then dwell there evenly
+// spaced, rather than gliding symmetrically (which would linger in the
+// spread-apart midpoint). Recover s from x(s)=t by bisection, then return y(s).
 double easeProgress(double t)
 {
+    constexpr double x1 = 0.011, y1 = 0.540, x2 = 0.533, y2 = 0.964;
+    auto bez = [](double a, double b, double s) {
+        const double u = 1.0 - s;
+        return 3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s;
+    };
     double lo = 0.0, hi = 1.0, s = 0.0;
-    for (int i = 0; i < 24; ++i) {
+    for (int i = 0; i < 30; ++i) {
         s = 0.5 * (lo + hi);
-        const double x = (3.0 - 2.0 * s) * s * s;   // 3s² − 2s³
-        if (x < t) lo = s; else hi = s;
+        if (bez(x1, x2, s) < t) lo = s; else hi = s;
     }
-    return ((4.0 * s - 6.0) * s + 3.0) * s;          // 4s³ − 6s² + 3s
+    return bez(y1, y2, s);
 }
 
 } // namespace
