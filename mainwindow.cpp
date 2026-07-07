@@ -22,6 +22,8 @@
 
 
 #include "mainwindow.h"
+#include "loading_spinner.h"
+#include <QEvent>
 
 MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
@@ -30,6 +32,7 @@ MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     this->changeTabMapper = nullptr;
     this->downloadMapper = nullptr;
     this->thumbnailNAM = nullptr;
+    this->searchSpinner = nullptr;
     this->updatingComboQuality = false;
     ui.setupUi(this);
 }
@@ -108,6 +111,11 @@ void MainWindow::init()
             this, &MainWindow::handleSearchResultActivated);
     connect(ui.searchResults, &QListWidget::itemClicked,
             this, &MainWindow::handleSearchResultActivated);
+    // Loading animation floated over the (empty) results viewport while a
+    // search is in flight. The event filter keeps it sized to the viewport.
+    searchSpinner = new LoadingSpinner(ui.searchResults->viewport());
+    searchSpinner->hide();
+    ui.searchResults->viewport()->installEventFilter(this);
     connect(&searchTimer, SIGNAL(timeout()), this, SLOT(searchTimerTimeout()));
     connect(cg, &ClipGrab::youtubeDlDownloadFinished, [=] {
         YoutubeDl::find(true);
@@ -609,21 +617,21 @@ void MainWindow::on_searchLineEdit_textChanged(QString keywords)
     searchTimer.start(1500);
 
     if (isTimerActive) return;
-    showSearchPlaceholder(tr("Loading …"));
+    showSearchLoading();
 }
 
 void MainWindow::updateSearch(QString keywords) {
-    // Only swap to the loading placeholder if we're not already showing it;
-    // the helper checks the marker we set on placeholder items.
-    if (ui.searchResults->count() == 0
-            || ui.searchResults->item(0)->data(Qt::UserRole + 1).toBool() == false) {
-        showSearchPlaceholder(tr("Loading …"));
+    // Show the spinner unless it's already up (the debounce in
+    // on_searchLineEdit_textChanged starts it on the first keystroke).
+    if (searchSpinner == nullptr || !searchSpinner->isVisible()) {
+        showSearchLoading();
     }
     cg->search(keywords);
 }
 
 void MainWindow::showSearchPlaceholder(const QString& text)
 {
+    if (searchSpinner != nullptr) searchSpinner->hide();
     thumbnailRequests.clear();
     ui.searchResults->clear();
     // Placeholders read better as a single wide row than as one tile in an
@@ -633,10 +641,31 @@ void MainWindow::showSearchPlaceholder(const QString& text)
     QListWidgetItem* item = new QListWidgetItem(text);
     item->setFlags(Qt::ItemIsEnabled);
     item->setTextAlignment(Qt::AlignCenter);
-    // Mark this item as a placeholder so updateSearch() can tell whether
-    // a real search-result population is in progress vs. the loading state.
-    item->setData(Qt::UserRole + 1, true);
     ui.searchResults->addItem(item);
+}
+
+void MainWindow::showSearchLoading()
+{
+    // Drop any in-flight thumbnail loads and clear the grid, then float the
+    // animated spinner over the now-empty viewport.
+    thumbnailRequests.clear();
+    ui.searchResults->clear();
+    if (searchSpinner != nullptr) {
+        searchSpinner->setGeometry(ui.searchResults->viewport()->rect());
+        searchSpinner->show();
+        searchSpinner->raise();
+    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    // Keep the loading spinner covering the results viewport as it resizes.
+    if (searchSpinner != nullptr
+            && watched == ui.searchResults->viewport()
+            && event->type() == QEvent::Resize) {
+        searchSpinner->setGeometry(ui.searchResults->viewport()->rect());
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::requestThumbnail(QListWidgetItem* item, const QString& url)
@@ -661,6 +690,7 @@ void MainWindow::requestThumbnail(QListWidgetItem* item, const QString& url)
 
 void MainWindow::handleSearchResults(video* searchPlaylist)
 {
+    if (searchSpinner != nullptr) searchSpinner->hide();
     // Cancel any thumbnail requests still in flight from the previous search
     // — their target items are about to be destroyed by clear().
     thumbnailRequests.clear();

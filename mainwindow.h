@@ -38,6 +38,7 @@
 
 class QNetworkAccessManager;
 class QListWidgetItem;
+class LoadingSpinner;
 
 class MainWindow : public QMainWindow
 {
@@ -68,6 +69,7 @@ private:
      void closeEvent(QCloseEvent* event);
      void timerEvent(QTimerEvent*);
      void changeEvent(QEvent *);
+     bool eventFilter(QObject* watched, QEvent* event) override;
      void dragEnterEvent(QDragEnterEvent *event);
      void dropEvent(QDropEvent *event);
      bool updatingComboQuality;
@@ -77,10 +79,13 @@ private:
      // waiting on so the handler can update the right row when the network
      // request finishes (or quietly skip stale replies for cleared items).
      QHash<QObject*, QListWidgetItem*> thumbnailRequests;
+     // Animated overlay floated over the results list while a search runs.
+     LoadingSpinner* searchSpinner;
      void updateSearch(QString keywords);
      void updateYoutubeDlVersionInfo();
      void requestThumbnail(QListWidgetItem* item, const QString& url);
      void showSearchPlaceholder(const QString& text);
+     void showSearchLoading();
 
 private slots:
     void handleCurrentVideoStateChanged(video*);

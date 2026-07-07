@@ -30,6 +30,7 @@ set(CLIPGRAB_SOURCES
     converter_ffmpeg.cpp
     download_list_model.cpp
     helper_downloader.cpp
+    loading_spinner.cpp
     main.cpp
     mainwindow.cpp
     message_dialog.cpp
@@ -45,6 +46,7 @@ set(CLIPGRAB_HEADERS
     converter_ffmpeg.h
     download_list_model.h
     helper_downloader.h
+    loading_spinner.h
     mainwindow.h
     message_dialog.h
     notifications.h
