@@ -25,9 +25,12 @@ public:
     // Name of the binary inside the extracted onedir bundle (or, on Linux,
     // the script itself). Used to locate the actual executable in `find()`.
     static QString bundledBinaryName();
-    // Directory under AppDataLocation that holds the extracted onedir
-    // bundle. On Linux this is just AppDataLocation since we keep the
-    // single-file script there.
+    // Directory that holds the downloaded yt-dlp. On macOS/Windows it's a
+    // dedicated "<AppData>/yt-dlp-bundle" folder for the extracted onedir
+    // bundle — deliberately NOT "<AppData>/yt-dlp", which is the file older
+    // releases download the plain script to (kept distinct so a downgrade to
+    // an old build still works). On Linux it's AppDataLocation itself, where
+    // the single-file script has always lived.
     static QString installDir();
 
     // True when a usable yt-dlp is present and at least minVersion. When it

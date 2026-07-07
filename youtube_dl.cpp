@@ -45,8 +45,17 @@ QString YoutubeDl::bundledBinaryName() {
 QString YoutubeDl::installDir() {
     QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
 #if defined(Q_OS_WIN) || defined(Q_OS_MAC)
-    return base + "/yt-dlp";
+    // Deliberately NOT "<AppData>/yt-dlp": released 3.9.x downloads the plain
+    // yt-dlp *script* to the file "<AppData>/yt-dlp" (see the old
+    // ClipGrab::startYoutubeDlDownload → QFile(dir + "/yt-dlp")). Extracting
+    // the onedir bundle into a directory of that same name would clobber that
+    // file, and — worse — leave a directory where a user who downgrades to an
+    // older build expects to read/write a file, breaking it. Use a separate
+    // directory so both installs coexist and downgrades keep working.
+    return base + "/yt-dlp-bundle";
 #else
+    // Linux keeps the single-file script at "<AppData>/yt-dlp", exactly where
+    // older releases put it, so old and new builds share it compatibly.
     return base;
 #endif
 }
