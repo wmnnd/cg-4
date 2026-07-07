@@ -28,7 +28,7 @@ namespace {
 
 // One grow→slide→shrink cycle. The reference APNG plays four such cycles over
 // its 2.22s loop, i.e. ~555ms each.
-constexpr int kPeriodMs = 555;
+constexpr int kPeriodMs = 700;
 
 // ClipGrab cyan (#00b4de) — the dot colour the CSS version used.
 const QColor kDotColor(0x00, 0xb4, 0xde);
@@ -87,7 +87,7 @@ void LoadingSpinner::paintEvent(QPaintEvent* /*event*/)
     // the middle two slide one step right, the last shrinks out at the right;
     // the grow/shrink pair straddles the loop seam so the motion is seamless.
     const double cx = width() / 2.0;
-    const double cy = height() / 2.0;
+    const double cy = height() / 2.0 - 22.0;
     // Reference proportions (dot radius 20, spacing 68 in a 200px box) at 75%.
     double R = 15.0;
     double step = 51.0;
