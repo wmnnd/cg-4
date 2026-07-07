@@ -197,10 +197,12 @@ jobs:
           fi
 
       - name: Import signing certificate (macOS)
+        id: import_cert
         if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
         env:
           MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
           echo "$MACOS_CERTIFICATE_P12" | base64 --decode > cert.p12
           KEYCHAIN=build.keychain
@@ -214,9 +216,26 @@ jobs:
             -s -k actions "$KEYCHAIN"
           rm -f cert.p12
 
+          # Resolve the signing identity: honor an explicit MACOS_SIGN_IDENTITY
+          # if set, otherwise read it back from the cert we just imported. The
+          # keychain is freshly created and holds exactly one code-signing
+          # identity, so this is unambiguous — meaning the .p12 + its password
+          # are the only signing secrets you have to configure.
+          identity="${MACOS_SIGN_IDENTITY:-}"
+          if [ -z "$identity" ]; then
+            identity=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+              | awk -F'"' '/"/{print $2; exit}')
+          fi
+          if [ -z "$identity" ]; then
+            echo "::error::no code-signing identity found in the imported .p12"
+            exit 1
+          fi
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "==> Using signing identity: $identity"
+
       - name: Sign app (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
-        run: bash packaging/macos/sign-app.sh stage/ClipGrab.app "${{ secrets.MACOS_SIGN_IDENTITY }}"
+        run: bash packaging/macos/sign-app.sh stage/ClipGrab.app "${{ steps.import_cert.outputs.identity }}"
 
       - name: Install create-dmg (macOS)
         if: runner.os == 'macOS'
@@ -259,7 +278,7 @@ jobs:
 
       - name: Sign DMG (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
-        run: codesign --force --timestamp --sign "${{ secrets.MACOS_SIGN_IDENTITY }}" dist/clipgrab-macos.dmg
+        run: codesign --force --timestamp --sign "${{ steps.import_cert.outputs.identity }}" dist/clipgrab-macos.dmg
 
       - name: Notarize + staple DMG (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_notarize == 'true'
