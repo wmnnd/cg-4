@@ -26,8 +26,9 @@
 
 namespace {
 
-// One full loop, matching the original CSS animation duration (0.6s).
-constexpr int kPeriodMs = 600;
+// One grow→slide→shrink cycle. The reference APNG plays four such cycles over
+// its 2.22s loop, i.e. ~555ms each.
+constexpr int kPeriodMs = 555;
 
 // ClipGrab cyan (#00b4de) — the dot colour the CSS version used.
 const QColor kDotColor(0x00, 0xb4, 0xde);
@@ -78,22 +79,24 @@ void LoadingSpinner::paintEvent(QPaintEvent* /*event*/)
     const double t = (clock.isValid() ? clock.elapsed() % kPeriodMs : 0) / double(kPeriodMs);
     const double e = easeProgress(t);
 
-    // lds-ellipsis geometry in its native 64px box: four 11px dots — one grows
-    // in at the left, the middle two slide 19px to the right, the last shrinks
-    // out at the right. The grow/shrink pair straddles the loop seam so the
-    // motion reads as seamless.
-    const double r = 5.5;
+    // lds-ellipsis at the reference APNG's proportions (200px box): dot radius
+    // 20 with three rest positions 68px apart. One dot grows in at the left,
+    // the middle two slide one step right, the last shrinks out at the right;
+    // the grow/shrink pair straddles the loop seam so the motion is seamless.
+    const double cx = width() / 2.0;
+    const double cy = height() / 2.0;
+    const double f = qMin(1.0, width() / 200.0);   // shrink to fit only if narrow
+    if (f <= 0.0) return;
+    const double R = 20.0 * f;
+    const double step = 68.0 * f;
+
     struct Dot { double x, scale; };
     const Dot dots[] = {
-        { 11.5,            e       },
-        { 11.5 + 19.0 * e, 1.0     },
-        { 31.5 + 19.0 * e, 1.0     },
-        { 50.5,            1.0 - e },
+        { cx - step,             e       },   // grow in at the left
+        { cx - step * (1.0 - e), 1.0     },   // slide left → middle
+        { cx + step * e,         1.0     },   // slide middle → right
+        { cx + step,             1.0 - e },   // shrink out at the right
     };
-
-    // Centre that 64px design box within our rect.
-    const double ox = width() / 2.0 - 32.0;
-    const double cy = height() / 2.0;
 
     QPainter p(this);
     // Clear the previous frame (child widgets aren't auto-erased, so the moving
@@ -103,7 +106,7 @@ void LoadingSpinner::paintEvent(QPaintEvent* /*event*/)
     p.setPen(Qt::NoPen);
     p.setBrush(kDotColor);
     for (const Dot& d : dots) {
-        const double rr = r * d.scale;
-        if (rr > 0.05) p.drawEllipse(QPointF(ox + d.x, cy), rr, rr);
+        const double rr = R * d.scale;
+        if (rr > 0.05) p.drawEllipse(QPointF(d.x, cy), rr, rr);
     }
 }
