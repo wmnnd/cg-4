@@ -169,7 +169,7 @@ jobs:
           mv ClipGrab*.AppImage dist/clipgrab-linux-x86_64.AppImage
 
       # ====================================================================
-      # MACOS  — stage .app, (sign) → .zip, (notarize+staple) → .dmg
+      # MACOS  — stage .app, (sign) → .dmg, (sign + notarize + staple .dmg)
       # ====================================================================
       - name: Stage bundle (macOS)
         if: runner.os == 'macOS'
@@ -217,32 +217,6 @@ jobs:
       - name: Sign app (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
         run: bash packaging/macos/sign-app.sh stage/ClipGrab.app "${{ secrets.MACOS_SIGN_IDENTITY }}"
-
-      - name: Notarize + staple .app (macOS)
-        if: runner.os == 'macOS' && steps.gate.outputs.mac_notarize == 'true'
-        env:
-          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
-          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
-        run: |
-          # API-key auth needs the .p8 on disk; app-specific-password auth
-          # doesn't. notarize.sh picks whichever credential set is present.
-          if [[ -n "$NOTARY_KEY" ]]; then
-            echo "$NOTARY_KEY" | base64 --decode > notary.p8
-            export NOTARY_KEY_PATH="$PWD/notary.p8"
-          fi
-          # notarytool can't submit a raw .app, so zip it to a throwaway
-          # container purely for submission, then staple the ticket to the
-          # .app in `stage`. We ship the .dmg (built from and notarized around
-          # this stapled .app), so both the app and the .dmg end up notarized —
-          # no distributable .zip is produced.
-          submit_zip="$RUNNER_TEMP/notarize-app.zip"
-          ditto -c -k --keepParent stage/ClipGrab.app "$submit_zip"
-          bash packaging/macos/notarize.sh "$submit_zip" stage/ClipGrab.app
-          rm -f "$submit_zip" notary.p8
 
       - name: Install create-dmg (macOS)
         if: runner.os == 'macOS'
@@ -297,10 +271,16 @@ jobs:
           NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
           NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
         run: |
+          # API-key auth needs the .p8 on disk; app-specific-password auth
+          # doesn't. notarize.sh picks whichever credential set is present.
           if [[ -n "$NOTARY_KEY" ]]; then
             echo "$NOTARY_KEY" | base64 --decode > notary.p8
             export NOTARY_KEY_PATH="$PWD/notary.p8"
           fi
+          # Single notarization pass: Apple inspects every executable inside the
+          # .dmg (the .app and its nested ffmpeg/deno/Qt code), so notarizing the
+          # image covers the app too. Stapling the .dmg lets Gatekeeper verify it
+          # offline at mount time.
           bash packaging/macos/notarize.sh dist/clipgrab-macos.dmg
           rm -f notary.p8
 
