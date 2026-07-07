@@ -11,7 +11,15 @@ QT += core \
 QT += gui
 QT += network
 QT += xml
-QT += webenginewidgets
+
+# The port targets C++20 (matches CMakeLists); qmake defaults to C++17,
+# under which the [=, this] lambda captures only warn but this keeps the
+# two build systems consistent.
+CONFIG += c++20
+
+# NOTE: CMake (CMakeLists.txt) is the primary, CI-validated build system.
+# This .pro is kept for convenience but is not exercised by CI, so it can
+# drift — if it fails, prefer building with CMake.
 
 # Input
 HEADERS += converter.h \
@@ -24,7 +32,6 @@ HEADERS += converter.h \
     notifications.h \
     message_dialog.h \
     clipgrab.h \
-    web_engine_view.h \
     youtube_dl.h
 FORMS += metadata-dialog.ui \
     helper_downloader.ui \
@@ -42,7 +49,6 @@ SOURCES += converter.cpp \
     notifications.cpp \
     message_dialog.cpp \
     clipgrab.cpp \
-    web_engine_view.cpp \
     youtube_dl.cpp
 RESOURCES += resources.qrc
 TRANSLATIONS += clipgrab_bg.ts \
@@ -89,4 +95,7 @@ macx {
     LIBS += -framework AppKit -framework Foundation
 }
 VERSION = 3.9.14
-DEFINES += CLIPGRAB_VERSION=$$VERSION
+# Quote the value so the preprocessor sees a string literal — main.cpp does
+# QStringLiteral(CLIPGRAB_VERSION). Without the escaped quotes qmake passes
+# -DCLIPGRAB_VERSION=3.9.14 (bare), which breaks compilation.
+DEFINES += CLIPGRAB_VERSION=\\\"$$VERSION\\\"
