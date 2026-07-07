@@ -246,16 +246,39 @@ jobs:
           rm -f dist/clipgrab-macos.zip notary.p8
           ditto -c -k --keepParent stage/ClipGrab.app dist/clipgrab-macos.zip
 
+      - name: Install create-dmg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install create-dmg
+
       - name: Build DMG (macOS)
         if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euxo pipefail
           mkdir -p dist
-          DMGROOT="$(mktemp -d)"
-          cp -R stage/ClipGrab.app "$DMGROOT/"
-          ln -s /Applications "$DMGROOT/Applications"
-          hdiutil create -volname "ClipGrab" -srcfolder "$DMGROOT" \
-            -ov -format UDZO dist/clipgrab-macos.dmg
+          rm -f dist/clipgrab-macos.dmg
+          # create-dmg drives Finder (via AppleScript) to set the window
+          # background + icon layout — the part hdiutil alone can't do. The
+          # source folder ("stage") must contain only ClipGrab.app;
+          # --app-drop-link adds the /Applications symlink itself. The app is
+          # already signed + stapled at this point, and copying preserves both.
+          args=(
+            --no-internet-enable
+            --window-size 460 310
+            --icon-size 64
+            --text-size 12
+            --icon "ClipGrab.app" 130 175
+            --app-drop-link 335 175
+            --volname "ClipGrab $VERSION"
+            --format UDBZ
+          )
+          if [[ -f packaging/macos/dmg-background.png ]]; then
+            args+=(--background packaging/macos/dmg-background.png)
+          else
+            echo "::warning::packaging/macos/dmg-background.png missing — building an unstyled DMG. Commit the background to enable it."
+          fi
+          create-dmg "${args[@]}" dist/clipgrab-macos.dmg stage
 
       - name: Sign DMG (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
