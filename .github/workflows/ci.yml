@@ -340,3 +340,30 @@ jobs:
           name: clipgrab-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
+
+  # ======================================================================
+  # Scrubbed open-source snapshot: strip all private deployment / CI /
+  # signing / internal-notes paths via git-filter-repo and publish the
+  # result as a source .tar.gz alongside the binary releases.
+  # ======================================================================
+  source:
+    name: source-tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git-filter-repo needs full history — it refuses shallow clones.
+          fetch-depth: 0
+
+      - name: Install git-filter-repo
+        run: sudo apt-get update && sudo apt-get install -y git-filter-repo
+
+      - name: Export scrubbed source tarball
+        run: bash packaging/export-source.sh dist/clipgrab-source.tar.gz
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipgrab-source
+          path: dist/clipgrab-source.tar.gz
+          if-no-files-found: error
