@@ -88,10 +88,16 @@ void LoadingSpinner::paintEvent(QPaintEvent* /*event*/)
     // the grow/shrink pair straddles the loop seam so the motion is seamless.
     const double cx = width() / 2.0;
     const double cy = height() / 2.0;
-    const double f = qMin(1.0, width() / 200.0);   // shrink to fit only if narrow
-    if (f <= 0.0) return;
-    const double R = 20.0 * f;
-    const double step = 68.0 * f;
+    // Reference proportions (dot radius 20, spacing 68 in a 200px box) at 75%.
+    double R = 15.0;
+    double step = 51.0;
+    // Shrink to fit only if the results area is ever narrower than the spinner.
+    const double needed = 2.0 * (step + R) + 8.0;
+    if (width() > 0 && width() < needed) {
+        const double k = width() / needed;
+        R *= k;
+        step *= k;
+    }
 
     struct Dot { double x, scale; };
     const Dot dots[] = {
