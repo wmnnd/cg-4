@@ -129,7 +129,9 @@ jobs:
       - name: Read version
         id: version
         shell: bash
-        run: echo "version=$(grep -m1 'set(CLIPGRAB_VERSION' CMakeLists.txt | sed -E 's/.*VERSION ([0-9.]+).*/\1/')" >> "$GITHUB_OUTPUT"
+        # Capture the full version string including any pre-release suffix
+        # (e.g. 4.0.0-beta1) — everything between "CLIPGRAB_VERSION " and ")".
+        run: echo "version=$(grep -m1 'set(CLIPGRAB_VERSION' CMakeLists.txt | sed -E 's/.*CLIPGRAB_VERSION[[:space:]]+([^)]+)\).*/\1/')" >> "$GITHUB_OUTPUT"
 
       # ====================================================================
       # LINUX  — raw binary tarball + AppImage (bundles Qt, runs anywhere
@@ -174,10 +176,22 @@ jobs:
       # ====================================================================
       - name: Stage bundle (macOS)
         if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euxo pipefail
           mkdir -p stage
           cp -R build/ClipGrab.app stage/
+
+          # The Info.plist is generated from the ClipGrab.plist template;
+          # assert the version substitution actually happened so a drifted
+          # template can't ship a bundle claiming the wrong (or literal
+          # placeholder) version.
+          plist_ver=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" \
+                      stage/ClipGrab.app/Contents/Info.plist)
+          if [[ "$plist_ver" != "$VERSION" ]]; then
+            echo "::error::Info.plist version is '$plist_ver', expected '$VERSION'"; exit 1
+          fi
           # Qt 6's official macOS binaries are universal2 and our own build
           # compiles both slices, so the deployed bundle stays universal —
           # ffmpeg/deno arrive pre-lipo'd from prepare-dependencies.
@@ -265,7 +279,7 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p dist
-          rm -f dist/clipgrab-macos.dmg
+          rm -f "dist/ClipGrab-$VERSION.dmg"
           # create-dmg drives Finder (via AppleScript) to set the window
           # background + icon layout — the part hdiutil alone can't do. The
           # source folder ("stage") must contain only ClipGrab.app;
@@ -291,15 +305,18 @@ jobs:
           else
             echo "::warning::packaging/macos/dmg-background.png missing — building an unstyled DMG. Commit the background to enable it."
           fi
-          create-dmg "${args[@]}" dist/clipgrab-macos.dmg stage
+          create-dmg "${args[@]}" "dist/ClipGrab-$VERSION.dmg" stage
 
       - name: Sign DMG (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
-        run: codesign --force --timestamp --sign "${{ steps.import_cert.outputs.identity }}" dist/clipgrab-macos.dmg
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: codesign --force --timestamp --sign "${{ steps.import_cert.outputs.identity }}" "dist/ClipGrab-$VERSION.dmg"
 
       - name: Notarize + staple DMG (macOS)
         if: runner.os == 'macOS' && steps.gate.outputs.mac_notarize == 'true'
         env:
+          VERSION: ${{ steps.version.outputs.version }}
           NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
@@ -317,7 +334,7 @@ jobs:
           # .dmg (the .app and its nested ffmpeg/deno/Qt code), so notarizing the
           # image covers the app too. Stapling the .dmg lets Gatekeeper verify it
           # offline at mount time.
-          bash packaging/macos/notarize.sh dist/clipgrab-macos.dmg
+          bash packaging/macos/notarize.sh "dist/ClipGrab-$VERSION.dmg"
           rm -f notary.p8
 
       # ====================================================================

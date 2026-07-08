@@ -18,7 +18,7 @@ paths:
 
 | Define            | Meaning                                                        |
 |-------------------|---------------------------------------------------------------|
-| `AppVersion`      | Version string (from `CLIPGRAB_VERSION` in `CMakeLists.txt`).  |
+| `AppVersion`      | Version string (from `CLIPGRAB_VERSION` in `CMakeLists.txt`). May carry a pre-release suffix (e.g. `4.0.0-beta1`) — fine for `[Setup] AppVersion`, but do NOT feed it to `VersionInfoVersion`, which requires numeric `x.x.x.x`. |
 | `StageDir`        | Folder containing the fully-staged app: `clipgrab.exe`, the Qt DLLs/plugins, `ffmpeg.exe`, `deno.exe`. Point `[Files]` at `{#StageDir}\*`. |
 | `OutputDir`       | Where to emit the compiled installer.                         |
 | `OutputBaseName`  | Base filename of the installer (no extension).                |

@@ -1,8 +1,19 @@
 # 3.16 is the minimum Qt 6 supports (and documents) for its CMake API.
 cmake_minimum_required(VERSION 3.16)
 
-set(CLIPGRAB_VERSION 3.9.14)
-project(clipgrab VERSION ${CLIPGRAB_VERSION} LANGUAGES CXX)
+# The single place the version is defined. Everything else derives from it:
+# the CLIPGRAB_VERSION compile definition (app UI + update check), the
+# Info.plist version keys, the CI artifact/volume names, and the numeric
+# project() version below. Pre-release suffixes like -beta1 are supported
+# here; project(VERSION) only accepts plain x.y.z, so the numeric prefix is
+# extracted for it automatically.
+set(CLIPGRAB_VERSION 4.0.0-beta1)
+
+string(REGEX MATCH "^[0-9]+\\.[0-9]+(\\.[0-9]+)?" CLIPGRAB_VERSION_NUMERIC "${CLIPGRAB_VERSION}")
+if(NOT CLIPGRAB_VERSION_NUMERIC)
+    message(FATAL_ERROR "CLIPGRAB_VERSION must start with x.y[.z], got: ${CLIPGRAB_VERSION}")
+endif()
+project(clipgrab VERSION ${CLIPGRAB_VERSION_NUMERIC} LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -138,11 +149,17 @@ target_link_libraries(clipgrab PRIVATE
 set_target_properties(clipgrab PROPERTIES WIN32_EXECUTABLE TRUE)
 
 if(APPLE)
+    # ClipGrab.plist is a template: CMake substitutes the
+    # ${MACOSX_BUNDLE_*} placeholders below from these target properties
+    # when it generates the bundle's Info.plist, so the version lands there
+    # from the one CLIPGRAB_VERSION definition above.
     set_target_properties(clipgrab PROPERTIES
         MACOSX_BUNDLE TRUE
         MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ClipGrab.plist"
         MACOSX_BUNDLE_BUNDLE_NAME "ClipGrab"
         MACOSX_BUNDLE_ICON_FILE "clipgrab.icns"
+        MACOSX_BUNDLE_BUNDLE_VERSION "${CLIPGRAB_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${CLIPGRAB_VERSION}"
         OUTPUT_NAME "ClipGrab"
     )
     target_link_libraries(clipgrab PRIVATE "-framework AppKit" "-framework Foundation")
