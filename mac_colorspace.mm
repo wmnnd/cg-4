@@ -21,6 +21,8 @@
 
 #include "mac_colorspace.h"
 
+#include <QApplication>
+#include <QEvent>
 #include <QWidget>
 
 #import <AppKit/AppKit.h>
@@ -37,5 +39,43 @@ void setWindowSRGBColorSpace(QWidget* widget)
     NSWindow* window = view ? view.window : nil;
     if (window) {
         window.colorSpace = [NSColorSpace sRGBColorSpace];
+    }
+}
+
+namespace {
+
+// Tags each top-level window as sRGB the moment it is shown. Overriding only
+// the eventFilter virtual needs no Q_OBJECT / moc.
+class SRGBWindowFilter : public QObject
+{
+public:
+    using QObject::QObject;
+
+    bool eventFilter(QObject* obj, QEvent* event) override
+    {
+        if (event->type() == QEvent::Show) {
+            QWidget* w = qobject_cast<QWidget*>(obj);
+            if (w && w->isWindow()) {
+                setWindowSRGBColorSpace(w);
+            }
+        }
+        return QObject::eventFilter(obj, event);
+    }
+};
+
+} // namespace
+
+void installAppWideSRGBColorSpace()
+{
+    if (!qApp) {
+        return;
+    }
+    qApp->installEventFilter(new SRGBWindowFilter(qApp));
+    // Cover any top-level windows that already exist when this is called.
+    const QList<QWidget*> tops = QApplication::topLevelWidgets();
+    for (QWidget* w : tops) {
+        if (w->isWindow() && w->windowHandle()) {
+            setWindowSRGBColorSpace(w);
+        }
     }
 }

@@ -21,9 +21,6 @@ public:
     void setUrl(QUrl url);
     void setLinkPolicy(QString);
 
-protected:
-    void showEvent(QShowEvent* event) override;
-
 private:
     Ui::messageDialog *ui;
     QNetworkAccessManager* nam;

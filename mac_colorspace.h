@@ -34,8 +34,15 @@ class QWidget;
 // browser). No-op on non-macOS platforms.
 #if defined(Q_OS_MAC)
 void setWindowSRGBColorSpace(QWidget* widget);
+
+// Install an application-wide hook that tags every top-level window as sRGB
+// the moment it is shown (see setWindowSRGBColorSpace). Call once, right after
+// the QApplication is constructed, so the main window and every dialog get
+// colour-managed consistently. No-op on non-macOS platforms.
+void installAppWideSRGBColorSpace();
 #else
 inline void setWindowSRGBColorSpace(QWidget*) {}
+inline void installAppWideSRGBColorSpace() {}
 #endif
 
 #endif // MAC_COLORSPACE_H
