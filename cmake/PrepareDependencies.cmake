@@ -64,8 +64,7 @@ set(DENO_WIN_SHA256 "")
 set(DENO_MAC_ARM64_URL    "${DENO_BASE_URL}/deno-aarch64-apple-darwin.zip")
 set(DENO_MAC_ARM64_SHA256 "e2e63288d11e3f36855b60d77585844cbc5146600cbc7224e2d9276a35378089")
 set(DENO_MAC_X86_64_URL   "${DENO_BASE_URL}/deno-x86_64-apple-darwin.zip")
-# TODO: pin once verified. First run will print the computed value.
-set(DENO_MAC_X86_64_SHA256 "")
+set(DENO_MAC_X86_64_SHA256 "b4153bee3c24074c83513e1a209ffc982277f88b184caccd4de9ba5113cfa2e5")
 
 # ---------------------------------------------------------------------------
 # Locations
