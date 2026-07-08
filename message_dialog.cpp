@@ -5,7 +5,10 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QShowEvent>
 #include <QTextBrowser>
+
+#include "mac_colorspace.h"
 
 messageDialog::messageDialog(QWidget *parent) :
     QDialog(parent),
@@ -23,6 +26,15 @@ messageDialog::messageDialog(QWidget *parent) :
 messageDialog::~messageDialog()
 {
     delete ui;
+}
+
+void messageDialog::showEvent(QShowEvent* event)
+{
+    QDialog::showEvent(event);
+    // Colour-manage this window as sRGB so the message's colours render the
+    // same as they do in a browser instead of oversaturating on wide-gamut
+    // (Display P3) macOS screens. No-op off macOS; safe to call on each show.
+    setWindowSRGBColorSpace(this);
 }
 
 void messageDialog::setUrl(QUrl url)

@@ -47,6 +47,7 @@ set(CLIPGRAB_HEADERS
     download_list_model.h
     helper_downloader.h
     loading_spinner.h
+    mac_colorspace.h
     mainwindow.h
     message_dialog.h
     notifications.h
@@ -102,7 +103,8 @@ set(CLIPGRAB_TS_FILES
 if(WIN32)
     set(CLIPGRAB_PLATFORM_SOURCES windows_icon.rc)
 elseif(APPLE)
-    set(CLIPGRAB_PLATFORM_SOURCES clipgrab.icns)
+    # mac_colorspace.mm is Objective-C++ (AppKit) — only built on macOS.
+    set(CLIPGRAB_PLATFORM_SOURCES clipgrab.icns mac_colorspace.mm)
     set_source_files_properties(clipgrab.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
 endif()
 
