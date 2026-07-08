@@ -45,8 +45,9 @@ set(FFMPEG_MAC_ARM64_URL
     "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip")
 # TODO: pin once verified. First run will print the computed value.
 set(FFMPEG_MAC_ARM64_SHA256 "")
+# (Riedl's URL scheme calls the Intel arch "amd64".)
 set(FFMPEG_MAC_X86_64_URL
-    "https://ffmpeg.martin-riedl.de/redirect/latest/macos/x86_64/release/ffmpeg.zip")
+    "https://ffmpeg.martin-riedl.de/redirect/latest/macos/amd64/release/ffmpeg.zip")
 # TODO: pin once verified. First run will print the computed value.
 set(FFMPEG_MAC_X86_64_SHA256 "")
 
