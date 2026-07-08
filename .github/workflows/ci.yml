@@ -115,9 +115,10 @@ jobs:
         run: |
           extra=()
           if [[ "${{ runner.os }}" == "macOS" ]]; then
-            # ClipGrab.app targets Apple Silicon only. Deployment target 12.0
-            # matches Qt 6.9's own minimum.
-            extra+=(-DCMAKE_OSX_ARCHITECTURES=arm64)
+            # Universal2: one bundle for Apple Silicon and Intel. Deployment
+            # target 12.0 matches Qt 6.9's own minimum (so Intel = Macs that
+            # can run Monterey).
+            extra+=("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64")
             extra+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
           fi
           cmake -B build -DCMAKE_BUILD_TYPE=Release "${extra[@]}"
@@ -175,12 +176,12 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           set -euxo pipefail
-          mkdir -p stage_universal
-          cp -R build/ClipGrab.app stage_universal/
-          # Qt 6 macOS binaries are universal2; thin to arm64 after deploy.
-          macdeployqt stage_universal/ClipGrab.app -verbose=1
           mkdir -p stage
-          ditto --arch arm64 stage_universal/ClipGrab.app stage/ClipGrab.app
+          cp -R build/ClipGrab.app stage/
+          # Qt 6's official macOS binaries are universal2 and our own build
+          # compiles both slices, so the deployed bundle stays universal —
+          # ffmpeg/deno arrive pre-lipo'd from prepare-dependencies.
+          macdeployqt stage/ClipGrab.app -verbose=1
           cp external/ffmpeg-bin/ffmpeg stage/ClipGrab.app/Contents/MacOS/
           cp external/deno-bin/deno     stage/ClipGrab.app/Contents/MacOS/
           chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg \
@@ -195,6 +196,22 @@ jobs:
           if find stage/ClipGrab.app -iname '*WebEngine*' | grep -q .; then
             echo "::error::WebEngine residue found in bundle!"; exit 1
           fi
+
+          # Universal verification: the key Mach-Os must all carry both
+          # slices, else an Intel user gets a bundle that won't launch.
+          for bin in \
+              stage/ClipGrab.app/Contents/MacOS/ClipGrab \
+              stage/ClipGrab.app/Contents/MacOS/ffmpeg \
+              stage/ClipGrab.app/Contents/MacOS/deno \
+              stage/ClipGrab.app/Contents/Frameworks/QtCore.framework/QtCore; do
+            archs=$(lipo -archs "$bin")
+            if [[ "$archs" != *arm64* || "$archs" != *x86_64* ]]; then
+              echo "::error::$bin is not universal (archs: $archs)"; exit 1
+            fi
+          done
+          # Smoke-run the x86_64 slice under Rosetta (present on GH runners).
+          arch -x86_64 stage/ClipGrab.app/Contents/MacOS/ffmpeg -version | head -1
+          arch -x86_64 stage/ClipGrab.app/Contents/MacOS/deno --version | head -1
 
       - name: Import signing certificate (macOS)
         id: import_cert

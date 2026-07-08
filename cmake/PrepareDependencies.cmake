@@ -4,9 +4,9 @@
 #   cmake -P cmake/PrepareDependencies.cmake [-DEXTERNAL_DIR=<path>]
 #
 # On Windows: fetches a static ffmpeg build (BtbN) and the deno JS runtime.
-# On macOS:   fetches an Apple Silicon static ffmpeg (Martin Riedl) and the
-#             deno JS runtime. The macOS build targets arm64 only — Intel
-#             macs are not supported.
+# On macOS:   fetches static ffmpeg (Martin Riedl) and the deno JS runtime
+#             for BOTH arm64 and x86_64 and lipo-merges each pair into a
+#             universal binary, matching the universal2 app build.
 # On Linux:   no-op. ClipGrab on Linux uses system ffmpeg.
 #
 # Python is no longer downloaded here: yt-dlp's own PyInstaller binaries
@@ -40,10 +40,15 @@ set(FFMPEG_WIN_SHA256 "")
 
 # Martin Riedl publishes per-arch macOS builds with a stable redirect URL
 # for the latest release. evermeet.cx is Intel-only so we don't use it.
-set(FFMPEG_MAC_URL
+# Both arches are fetched and lipo-merged into one universal ffmpeg.
+set(FFMPEG_MAC_ARM64_URL
     "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/ffmpeg.zip")
 # TODO: pin once verified. First run will print the computed value.
-set(FFMPEG_MAC_SHA256 "")
+set(FFMPEG_MAC_ARM64_SHA256 "")
+set(FFMPEG_MAC_X86_64_URL
+    "https://ffmpeg.martin-riedl.de/redirect/latest/macos/x86_64/release/ffmpeg.zip")
+# TODO: pin once verified. First run will print the computed value.
+set(FFMPEG_MAC_X86_64_SHA256 "")
 
 # yt-dlp's YouTube extractor invokes a JS runtime (deno preferred, node
 # fallback) for signature deciphering. Without one in PATH, per-language
@@ -55,8 +60,11 @@ set(DENO_BASE_URL
 set(DENO_WIN_URL    "${DENO_BASE_URL}/deno-x86_64-pc-windows-msvc.zip")
 # TODO: pin once verified. First run will print the computed value.
 set(DENO_WIN_SHA256 "")
-set(DENO_MAC_URL    "${DENO_BASE_URL}/deno-aarch64-apple-darwin.zip")
-set(DENO_MAC_SHA256 "e2e63288d11e3f36855b60d77585844cbc5146600cbc7224e2d9276a35378089")
+set(DENO_MAC_ARM64_URL    "${DENO_BASE_URL}/deno-aarch64-apple-darwin.zip")
+set(DENO_MAC_ARM64_SHA256 "e2e63288d11e3f36855b60d77585844cbc5146600cbc7224e2d9276a35378089")
+set(DENO_MAC_X86_64_URL   "${DENO_BASE_URL}/deno-x86_64-apple-darwin.zip")
+# TODO: pin once verified. First run will print the computed value.
+set(DENO_MAC_X86_64_SHA256 "")
 
 # ---------------------------------------------------------------------------
 # Locations
@@ -126,6 +134,39 @@ function(fetch_archive)
         DESTINATION "${ARG_DESTINATION}")
 endfunction()
 
+# lipo-merge per-arch Mach-O binaries into one universal binary at OUTPUT,
+# then verify both slices actually made it in. macOS-host only.
+function(make_universal)
+    cmake_parse_arguments(ARG "" "OUTPUT" "INPUTS" ${ARGN})
+
+    get_filename_component(out_dir "${ARG_OUTPUT}" DIRECTORY)
+    file(REMOVE_RECURSE "${out_dir}")
+    file(MAKE_DIRECTORY "${out_dir}")
+
+    execute_process(
+        COMMAND lipo -create ${ARG_INPUTS} -output "${ARG_OUTPUT}"
+        RESULT_VARIABLE lipo_result
+        ERROR_VARIABLE lipo_error)
+    if(NOT lipo_result EQUAL 0)
+        message(FATAL_ERROR "lipo -create failed for ${ARG_OUTPUT}: ${lipo_error}")
+    endif()
+
+    execute_process(
+        COMMAND lipo -archs "${ARG_OUTPUT}"
+        OUTPUT_VARIABLE archs
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT (archs MATCHES "arm64" AND archs MATCHES "x86_64"))
+        message(FATAL_ERROR
+            "${ARG_OUTPUT} is not universal (archs: ${archs})")
+    endif()
+
+    file(CHMOD "${ARG_OUTPUT}" PERMISSIONS
+        OWNER_READ OWNER_WRITE OWNER_EXECUTE
+        GROUP_READ GROUP_EXECUTE
+        WORLD_READ WORLD_EXECUTE)
+    message(STATUS "Staged universal binary at ${ARG_OUTPUT} (${archs})")
+endfunction()
+
 # ---------------------------------------------------------------------------
 # Platform dispatch
 # ---------------------------------------------------------------------------
@@ -161,51 +202,63 @@ if(CMAKE_HOST_WIN32)
     message(STATUS "Staged deno ${DENO_VERSION} at ${EXTERNAL_DIR}/deno-bin/deno.exe")
 
 elseif(CMAKE_HOST_APPLE)
-    # macOS build targets Apple Silicon only — Intel is not supported. The
-    # arch picks for deno/Python/ffmpeg are hardcoded to arm64 because
-    # CMAKE_HOST_SYSTEM_PROCESSOR is empty in `cmake -P` script mode anyway.
-    message(STATUS "Preparing macOS (arm64) dependencies in ${EXTERNAL_DIR}")
+    # The app ships as a universal2 bundle, so the bundled tools must be
+    # universal too: fetch each upstream's arm64 and x86_64 builds and
+    # lipo-merge them. (The arch list is hardcoded rather than probed since
+    # CMAKE_HOST_SYSTEM_PROCESSOR is empty in `cmake -P` script mode anyway.)
+    message(STATUS "Preparing macOS (universal2) dependencies in ${EXTERNAL_DIR}")
 
+    # --- ffmpeg: per-arch zips, each containing one `ffmpeg` at the root ---
     fetch_archive(
         NAME    "ffmpeg-macos-arm64.zip"
-        URL     "${FFMPEG_MAC_URL}"
-        SHA256  "${FFMPEG_MAC_SHA256}"
-        DESTINATION "${EXTERNAL_DIR}/ffmpeg-extracted")
+        URL     "${FFMPEG_MAC_ARM64_URL}"
+        SHA256  "${FFMPEG_MAC_ARM64_SHA256}"
+        DESTINATION "${EXTERNAL_DIR}/ffmpeg-extracted-arm64")
+    fetch_archive(
+        NAME    "ffmpeg-macos-x86_64.zip"
+        URL     "${FFMPEG_MAC_X86_64_URL}"
+        SHA256  "${FFMPEG_MAC_X86_64_SHA256}"
+        DESTINATION "${EXTERNAL_DIR}/ffmpeg-extracted-x86_64")
 
-    # The zip contains a single `ffmpeg` binary at the root.
-    file(GLOB_RECURSE found_ffmpeg "${EXTERNAL_DIR}/ffmpeg-extracted/ffmpeg")
-    if(NOT found_ffmpeg)
-        message(FATAL_ERROR
-            "Could not locate ffmpeg binary under ${EXTERNAL_DIR}/ffmpeg-extracted")
-    endif()
-    list(GET found_ffmpeg 0 ffmpeg_exe)
-    file(REMOVE_RECURSE "${EXTERNAL_DIR}/ffmpeg-bin")
-    file(MAKE_DIRECTORY "${EXTERNAL_DIR}/ffmpeg-bin")
-    file(COPY "${ffmpeg_exe}"
-        DESTINATION "${EXTERNAL_DIR}/ffmpeg-bin/"
-        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-                         GROUP_READ GROUP_EXECUTE
-                         WORLD_READ WORLD_EXECUTE)
-    message(STATUS "Staged ffmpeg at ${EXTERNAL_DIR}/ffmpeg-bin/ffmpeg")
+    set(ffmpeg_slices "")
+    foreach(arch arm64 x86_64)
+        file(GLOB_RECURSE found_ffmpeg "${EXTERNAL_DIR}/ffmpeg-extracted-${arch}/ffmpeg")
+        if(NOT found_ffmpeg)
+            message(FATAL_ERROR
+                "Could not locate ffmpeg binary under ${EXTERNAL_DIR}/ffmpeg-extracted-${arch}")
+        endif()
+        list(GET found_ffmpeg 0 ffmpeg_exe)
+        list(APPEND ffmpeg_slices "${ffmpeg_exe}")
+    endforeach()
+    make_universal(
+        OUTPUT "${EXTERNAL_DIR}/ffmpeg-bin/ffmpeg"
+        INPUTS ${ffmpeg_slices})
 
+    # --- deno: per-arch zips, each containing one `deno` at the root -------
     fetch_archive(
         NAME    "deno-${DENO_VERSION}-macos-arm64.zip"
-        URL     "${DENO_MAC_URL}"
-        SHA256  "${DENO_MAC_SHA256}"
-        DESTINATION "${EXTERNAL_DIR}/deno-extracted")
-    file(GLOB found_deno "${EXTERNAL_DIR}/deno-extracted/deno")
-    if(NOT found_deno)
-        message(FATAL_ERROR "Could not locate deno binary in extracted archive")
-    endif()
-    list(GET found_deno 0 deno_bin)
-    file(REMOVE_RECURSE "${EXTERNAL_DIR}/deno-bin")
-    file(MAKE_DIRECTORY "${EXTERNAL_DIR}/deno-bin")
-    file(COPY "${deno_bin}"
-        DESTINATION "${EXTERNAL_DIR}/deno-bin/"
-        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
-                         GROUP_READ GROUP_EXECUTE
-                         WORLD_READ WORLD_EXECUTE)
-    message(STATUS "Staged deno at ${EXTERNAL_DIR}/deno-bin/deno")
+        URL     "${DENO_MAC_ARM64_URL}"
+        SHA256  "${DENO_MAC_ARM64_SHA256}"
+        DESTINATION "${EXTERNAL_DIR}/deno-extracted-arm64")
+    fetch_archive(
+        NAME    "deno-${DENO_VERSION}-macos-x86_64.zip"
+        URL     "${DENO_MAC_X86_64_URL}"
+        SHA256  "${DENO_MAC_X86_64_SHA256}"
+        DESTINATION "${EXTERNAL_DIR}/deno-extracted-x86_64")
+
+    set(deno_slices "")
+    foreach(arch arm64 x86_64)
+        file(GLOB found_deno "${EXTERNAL_DIR}/deno-extracted-${arch}/deno")
+        if(NOT found_deno)
+            message(FATAL_ERROR
+                "Could not locate deno binary in ${EXTERNAL_DIR}/deno-extracted-${arch}")
+        endif()
+        list(GET found_deno 0 deno_bin)
+        list(APPEND deno_slices "${deno_bin}")
+    endforeach()
+    make_universal(
+        OUTPUT "${EXTERNAL_DIR}/deno-bin/deno"
+        INPUTS ${deno_slices})
 
 elseif(CMAKE_HOST_UNIX)
     message(STATUS "Linux build: no bundled runtime dependencies "
