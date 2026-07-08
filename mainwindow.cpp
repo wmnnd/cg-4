@@ -117,7 +117,7 @@ void MainWindow::init()
     searchSpinner->hide();
     ui.searchResults->viewport()->installEventFilter(this);
     connect(&searchTimer, SIGNAL(timeout()), this, SLOT(searchTimerTimeout()));
-    connect(cg, &ClipGrab::youtubeDlDownloadFinished, [=] {
+    connect(cg, &ClipGrab::youtubeDlDownloadFinished, [=, this] {
         YoutubeDl::find(true);
         this->updateSearch("");
         this->updateYoutubeDlVersionInfo();

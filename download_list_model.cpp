@@ -4,13 +4,13 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
     : QAbstractItemModel(parent), cg(cg)
 {
 
-    connect(cg, &ClipGrab::downloadEnqueued, this, [=] {
+    connect(cg, &ClipGrab::downloadEnqueued, this, [=, this] {
         if (cg->downloads.isEmpty()) return;
         video* enqueuedVideo = cg->downloads.last();
         beginInsertRows(QModelIndex(), 0, 0);
         endInsertRows();
 
-        connect(enqueuedVideo, &video::downloadProgressChanged, this, [=] {
+        connect(enqueuedVideo, &video::downloadProgressChanged, this, [=, this] {
             int idx = cg->downloads.indexOf(enqueuedVideo);
             if (idx < 0) return;
             int row = cg->downloads.size() - idx - 1;
@@ -20,7 +20,7 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
         });
 
 
-        connect(enqueuedVideo, &video::stateChanged, this, [=] {
+        connect(enqueuedVideo, &video::stateChanged, this, [=, this] {
             int idx = cg->downloads.indexOf(enqueuedVideo);
             if (idx < 0) return;
             int row = cg->downloads.size() - idx - 1;
@@ -30,7 +30,7 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
         });
     });
 
-    connect(cg, &ClipGrab::downloadAboutToBeRemoved, this, [=](video* removedVideo) {
+    connect(cg, &ClipGrab::downloadAboutToBeRemoved, this, [=, this](video* removedVideo) {
         int idx = cg->downloads.indexOf(removedVideo);
         if (idx < 0) return;
         int row = cg->downloads.size() - idx - 1;
@@ -38,7 +38,7 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
         beginRemoveRows(QModelIndex(), row, row);
     });
 
-    connect(cg, &ClipGrab::downloadRemoved, this, [=] {
+    connect(cg, &ClipGrab::downloadRemoved, this, [=, this] {
         endRemoveRows();
     });
 }
