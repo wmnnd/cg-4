@@ -20,6 +20,7 @@ PRIVATE_PATHS=(
     packaging
     cmake/PrepareDependencies.cmake
     CODE_REVIEW.md
+    FEATURE_PLANS.md
     PYTHON_OPTIONS.md
     YT_DLP_SIGNATURE_VERIFICATION.md
 )
@@ -36,7 +37,9 @@ if ! command -v git-filter-repo >/dev/null 2>&1; then
     exit 1
 fi
 
-VERSION="$(sed -nE 's/.*set\(CLIPGRAB_VERSION ([0-9.]+)\).*/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -1)"
+# [^)]+ (not [0-9.]+) so pre-release suffixes like 4.0.0-beta1 survive into
+# the archive prefix — mirrors the same fix in the CI "Read version" step.
+VERSION="$(sed -nE 's/.*set\(CLIPGRAB_VERSION ([^)]+)\).*/\1/p' "$REPO_ROOT/CMakeLists.txt" | head -1)"
 PREFIX="clipgrab-${VERSION:-source}/"
 
 WORK="$(mktemp -d)"
