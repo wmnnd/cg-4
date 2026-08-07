@@ -657,16 +657,11 @@ void ClipGrab::enqueueDownload(video* video) {
     if (video == nullptr || video->getState() != video::state::fetched || downloads.contains(video)) return;
 
     connect(video, &video::stateChanged, this, [=, this] {
-        // Only react to the transition into "finished" while the video is still
-        // enqueued: a repeated stateChanged() for an already handled download
-        // would otherwise emit an unbalanced downloadRemoved().
+        // Only report the transition into "finished" while the video is still
+        // enqueued, so every download announces itself exactly once. Taking it
+        // off the list afterwards is the download list model's job.
         if (video->getState() == video::state::finished && downloads.contains(video)) {
             emit downloadFinished(video);
-            if (QSettings().value("RemoveFinishedDownloads", false).toBool()) {
-                emit downloadAboutToBeRemoved(video);
-                downloads.removeAll(video);
-                emit downloadRemoved();
-            }
         }
        if (getRunningDownloadsCount() == 0) emit allDownloadsCanceled();
     });
