@@ -7,7 +7,7 @@ cmake_minimum_required(VERSION 3.16)
 # project() version below. Pre-release suffixes like -beta1 are supported
 # here; project(VERSION) only accepts plain x.y.z, so the numeric prefix is
 # extracted for it automatically.
-set(CLIPGRAB_VERSION 4.0.0-beta1)
+set(CLIPGRAB_VERSION 4.0.0-beta2)
 
 string(REGEX MATCH "^[0-9]+\\.[0-9]+(\\.[0-9]+)?" CLIPGRAB_VERSION_NUMERIC "${CLIPGRAB_VERSION}")
 if(NOT CLIPGRAB_VERSION_NUMERIC)
