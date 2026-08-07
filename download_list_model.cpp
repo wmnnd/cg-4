@@ -36,9 +36,15 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
         int row = cg->downloads.size() - idx - 1;
         if (row < 0 || row >= cg->downloads.size()) return;
         beginRemoveRows(QModelIndex(), row, row);
+        removalInProgress = true;
     });
 
     connect(cg, &ClipGrab::downloadRemoved, this, [=, this] {
+        // endRemoveRows() pops the pending change pushed by beginRemoveRows().
+        // Calling it without a matching begin corrupts the model's change stack
+        // and crashes in QAbstractItemModelPrivate::rowsRemoved().
+        if (!removalInProgress) return;
+        removalInProgress = false;
         endRemoveRows();
     });
 }

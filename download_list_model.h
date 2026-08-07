@@ -34,6 +34,7 @@ public:
 private:
     ClipGrab* cg;
     QList<video*> videos;
+    bool removalInProgress = false;
     QVector<QString> header {tr("Portal"), tr("Title"), tr("Quality"), tr("Format"), tr("Progress")};
 };
 
