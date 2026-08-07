@@ -1,0 +1,449 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - claude/remove-webengine
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            # Oldest hosted runner (20.04 was retired in 2025) → glibc 2.35,
+            # so the AppImage runs on essentially every currently-supported
+            # distro. Qt comes from apt (6.2.4 on jammy), which the app builds
+            # against fine; the bundled AppImage carries those Qt libs along.
+            os: ubuntu-22.04
+          - name: macos
+            # Pinned instead of macos-latest: the -latest pool is mid-migration
+            # to images whose default Xcode 26 SDK dropped AGL.framework, which
+            # Qt 6.9's prebuilt QtGui still links (-framework AGL). Runs were
+            # green or red depending on which image the job landed on.
+            os: macos-15
+            qt_arch: clang_64
+          - name: windows
+            os: windows-latest
+            qt_arch: win64_msvc2022_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ---- Detect which signing secrets are configured -------------------
+      # Signing / notarization / installer signing all key off these outputs.
+      # With no secrets set (forks, PoC branches) the whole pipeline still
+      # runs and produces UNSIGNED artifacts, it just skips the sign steps.
+      - name: Detect signing secrets
+        id: gate
+        shell: bash
+        env:
+          MAC_CERT: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MAC_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MAC_NOTARY_APPLEID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          WIN_CERT: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+        run: |
+          echo "mac_sign=$([[ -n "$MAC_CERT" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # Notarization needs EITHER the API key OR the Apple-ID credential set.
+          if [[ -n "$MAC_NOTARY_KEY" || -n "$MAC_NOTARY_APPLEID" ]]; then
+            echo "mac_notarize=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mac_notarize=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "win_sign=$([[ -n "$WIN_CERT" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Install Linux build deps (Qt6 from apt)
+        if: runner.os == 'Linux'
+        # WebEngine and Core5Compat packages intentionally omitted — clipgrab
+        # links neither. qt6-base-dev-tools gives qmake6 for linuxdeploy's Qt
+        # plugin; libfuse2 lets the linuxdeploy AppImages self-run.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            ninja-build \
+            imagemagick \
+            qt6-base-dev \
+            qt6-base-dev-tools \
+            qt6-base-private-dev \
+            qt6-tools-dev \
+            qt6-tools-dev-tools \
+            qt6-l10n-tools \
+            libxkbcommon-dev \
+            libgl1-mesa-dev
+
+      - name: Install Qt (macOS / Windows)
+        if: runner.os != 'Linux'
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.9.0'
+          arch: ${{ matrix.qt_arch }}
+          # No extra modules required — qtbase + qttools (which install-qt
+          # pulls in by default) cover Core/Gui/Widgets/Network/Xml +
+          # LinguistTools. WebEngine, Core5Compat, qtwebchannel, etc. are
+          # intentionally NOT installed: with WebEngine present in the Qt
+          # install, macdeployqt / windeployqt happily bundle the Chromium
+          # frameworks even though clipgrab itself doesn't link them.
+          cache: true
+
+      - name: Select Xcode 16 (SDK still ships AGL)
+        if: runner.os == 'macOS'
+        # Qt 6.9's binaries reference -framework AGL, which Apple removed
+        # from the SDK as of Xcode 26. Pin the newest Xcode 16.x on the
+        # image so the macOS 15 SDK (which still has the AGL stub) is used
+        # even if the image's default Xcode moves forward.
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          xcrun --show-sdk-version
+
+      - name: Cache external dependencies
+        uses: actions/cache@v4
+        with:
+          path: external/cache
+          key: ${{ runner.os }}-deps-${{ hashFiles('cmake/PrepareDependencies.cmake') }}
+
+      - name: Prepare dependencies
+        run: cmake -P cmake/PrepareDependencies.cmake
+
+      - name: Configure
+        shell: bash
+        run: |
+          extra=()
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            # Universal2: one bundle for Apple Silicon and Intel. Deployment
+            # target 12.0 matches Qt 6.9's own minimum (so Intel = Macs that
+            # can run Monterey).
+            extra+=("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64")
+            extra+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=12.0)
+          fi
+          cmake -B build -DCMAKE_BUILD_TYPE=Release "${extra[@]}"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Read version
+        id: version
+        shell: bash
+        # Capture the full version string including any pre-release suffix
+        # (e.g. 4.0.0-beta1) — everything between "CLIPGRAB_VERSION " and ")".
+        run: echo "version=$(grep -m1 'set(CLIPGRAB_VERSION' CMakeLists.txt | sed -E 's/.*CLIPGRAB_VERSION[[:space:]]+([^)]+)\).*/\1/')" >> "$GITHUB_OUTPUT"
+
+      # ====================================================================
+      # LINUX  — raw binary tarball + AppImage (bundles Qt, runs anywhere
+      #          with a recent-enough glibc, no system Qt required)
+      # ====================================================================
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+
+          # Raw binary tarball (needs system Qt — kept for parity / debugging).
+          mkdir -p stage/clipgrab && cp build/clipgrab stage/clipgrab/
+          tar -C stage -czf dist/clipgrab-linux.tar.gz clipgrab
+
+          # AppImage: install into an AppDir, let linuxdeploy pull in Qt + deps.
+          cmake --install build --prefix AppDir/usr
+          # linuxdeploy wants the icon stem to match the desktop file's Icon=
+          # and only accepts standard square sizes — icon.png is 80x80, so
+          # resize to 256x256.
+          convert icon.png -resize 256x256 clipgrab.png
+
+          curl -sSL -o linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -sSL -o linuxdeploy-plugin-qt.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy*.AppImage
+
+          # GitHub runners lack FUSE, so tell the AppImages to self-extract.
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          export QMAKE=/usr/bin/qmake6
+          ./linuxdeploy.AppImage --appdir AppDir \
+            -e AppDir/usr/bin/clipgrab \
+            -d packaging/linux/clipgrab.desktop \
+            -i clipgrab.png \
+            --plugin qt \
+            --output appimage
+          mv ClipGrab*.AppImage dist/clipgrab-linux-x86_64.AppImage
+
+      # ====================================================================
+      # MACOS  — stage .app, (sign) → .dmg, (sign + notarize + staple .dmg)
+      # ====================================================================
+      - name: Stage bundle (macOS)
+        if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euxo pipefail
+          mkdir -p stage
+          cp -R build/ClipGrab.app stage/
+
+          # The Info.plist is generated from the ClipGrab.plist template;
+          # assert the version substitution actually happened so a drifted
+          # template can't ship a bundle claiming the wrong (or literal
+          # placeholder) version.
+          plist_ver=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" \
+                      stage/ClipGrab.app/Contents/Info.plist)
+          if [[ "$plist_ver" != "$VERSION" ]]; then
+            echo "::error::Info.plist version is '$plist_ver', expected '$VERSION'"; exit 1
+          fi
+          # Qt 6's official macOS binaries are universal2 and our own build
+          # compiles both slices, so the deployed bundle stays universal —
+          # ffmpeg/deno arrive pre-lipo'd from prepare-dependencies.
+          macdeployqt stage/ClipGrab.app -verbose=1
+          cp external/ffmpeg-bin/ffmpeg stage/ClipGrab.app/Contents/MacOS/
+          cp external/deno-bin/deno     stage/ClipGrab.app/Contents/MacOS/
+          chmod +x stage/ClipGrab.app/Contents/MacOS/ffmpeg \
+                   stage/ClipGrab.app/Contents/MacOS/deno
+
+          # Defensive WebEngine purge + hard verification.
+          find stage/ClipGrab.app -type d -iname '*WebEngine*' -prune -exec rm -rf {} +
+          find stage/ClipGrab.app -type f -iname '*WebEngine*' -delete
+          find stage/ClipGrab.app -type f \( -name '*.dylib' -o -name '*.so' \) \
+            -print0 | xargs -0 strip -x || true
+          strip -x stage/ClipGrab.app/Contents/MacOS/ClipGrab || true
+          if find stage/ClipGrab.app -iname '*WebEngine*' | grep -q .; then
+            echo "::error::WebEngine residue found in bundle!"; exit 1
+          fi
+
+          # Universal verification: the key Mach-Os must all carry both
+          # slices, else an Intel user gets a bundle that won't launch.
+          for bin in \
+              stage/ClipGrab.app/Contents/MacOS/ClipGrab \
+              stage/ClipGrab.app/Contents/MacOS/ffmpeg \
+              stage/ClipGrab.app/Contents/MacOS/deno \
+              stage/ClipGrab.app/Contents/Frameworks/QtCore.framework/QtCore; do
+            archs=$(lipo -archs "$bin")
+            if [[ "$archs" != *arm64* || "$archs" != *x86_64* ]]; then
+              echo "::error::$bin is not universal (archs: $archs)"; exit 1
+            fi
+          done
+          # Smoke-run the x86_64 slice under Rosetta (present on GH runners).
+          arch -x86_64 stage/ClipGrab.app/Contents/MacOS/ffmpeg -version | head -1
+          arch -x86_64 stage/ClipGrab.app/Contents/MacOS/deno --version | head -1
+
+      - name: Import signing certificate (macOS)
+        id: import_cert
+        if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > cert.p12
+          KEYCHAIN=build.keychain
+          security create-keychain -p actions "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p actions "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security import cert.p12 -k "$KEYCHAIN" -P "$MACOS_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k actions "$KEYCHAIN"
+          rm -f cert.p12
+
+          # Resolve the signing identity: honor an explicit MACOS_SIGN_IDENTITY
+          # if set, otherwise read it back from the cert we just imported. The
+          # keychain is freshly created and holds exactly one code-signing
+          # identity, so this is unambiguous — meaning the .p12 + its password
+          # are the only signing secrets you have to configure.
+          identity="${MACOS_SIGN_IDENTITY:-}"
+          if [ -z "$identity" ]; then
+            identity=$(security find-identity -v -p codesigning "$KEYCHAIN" \
+              | awk -F'"' '/"/{print $2; exit}')
+          fi
+          if [ -z "$identity" ]; then
+            echo "::error::no code-signing identity found in the imported .p12"
+            exit 1
+          fi
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "==> Using signing identity: $identity"
+
+      - name: Sign app (macOS)
+        if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
+        run: bash packaging/macos/sign-app.sh stage/ClipGrab.app "${{ steps.import_cert.outputs.identity }}"
+
+      - name: Install create-dmg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install create-dmg
+
+      - name: Build DMG (macOS)
+        if: runner.os == 'macOS'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          rm -f "dist/ClipGrab-$VERSION.dmg"
+          # create-dmg drives Finder (via AppleScript) to set the window
+          # background + icon layout — the part hdiutil alone can't do. The
+          # source folder ("stage") must contain only ClipGrab.app;
+          # --app-drop-link adds the /Applications symlink itself. The app is
+          # already signed + stapled at this point, and copying preserves both.
+          args=(
+            --no-internet-enable
+            --window-size 460 310
+            --icon-size 64
+            --text-size 12
+            --icon "ClipGrab.app" 130 175
+            --app-drop-link 335 175
+            --volname "ClipGrab $VERSION"
+            --format UDBZ
+          )
+          if [[ -f packaging/macos/dmg-background.png ]]; then
+            # The committed background may be saved in another raster format
+            # (e.g. TIFF) despite the .png name; normalize to a real PNG via
+            # sips so Finder / create-dmg always get a valid image.
+            bg="$(mktemp -d)/dmg-background.png"
+            sips -s format png packaging/macos/dmg-background.png --out "$bg" >/dev/null
+            args+=(--background "$bg")
+          else
+            echo "::warning::packaging/macos/dmg-background.png missing — building an unstyled DMG. Commit the background to enable it."
+          fi
+          create-dmg "${args[@]}" "dist/ClipGrab-$VERSION.dmg" stage
+
+      - name: Sign DMG (macOS)
+        if: runner.os == 'macOS' && steps.gate.outputs.mac_sign == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: codesign --force --timestamp --sign "${{ steps.import_cert.outputs.identity }}" "dist/ClipGrab-$VERSION.dmg"
+
+      - name: Notarize + staple DMG (macOS)
+        if: runner.os == 'macOS' && steps.gate.outputs.mac_notarize == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_APP_PASSWORD: ${{ secrets.MACOS_NOTARY_APP_PASSWORD }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+        run: |
+          # API-key auth needs the .p8 on disk; app-specific-password auth
+          # doesn't. notarize.sh picks whichever credential set is present.
+          if [[ -n "$NOTARY_KEY" ]]; then
+            echo "$NOTARY_KEY" | base64 --decode > notary.p8
+            export NOTARY_KEY_PATH="$PWD/notary.p8"
+          fi
+          # Single notarization pass: Apple inspects every executable inside the
+          # .dmg (the .app and its nested ffmpeg/deno/Qt code), so notarizing the
+          # image covers the app too. Stapling the .dmg lets Gatekeeper verify it
+          # offline at mount time.
+          bash packaging/macos/notarize.sh "dist/ClipGrab-$VERSION.dmg"
+          rm -f notary.p8
+
+      # ====================================================================
+      # WINDOWS  — stage, (sign exe) → .zip, (Inno Setup) → installer (signed)
+      # ====================================================================
+      - name: Stage bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stage/clipgrab, dist | Out-Null
+          $exe = Get-ChildItem -Path build -Filter clipgrab.exe -Recurse | Select-Object -First 1
+          if (-not $exe) { throw "clipgrab.exe not found in build/" }
+          Copy-Item $exe.FullName stage/clipgrab/
+          windeployqt --release --no-translations --no-system-d3d-compiler --no-opengl-sw stage/clipgrab/clipgrab.exe
+          Copy-Item external/ffmpeg-bin/ffmpeg.exe stage/clipgrab/
+          Copy-Item external/deno-bin/deno.exe   stage/clipgrab/
+
+          Get-ChildItem -Path stage/clipgrab -Recurse -Force |
+              Where-Object { $_.Name -match 'WebEngine' } |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          $leftover = Get-ChildItem -Path stage/clipgrab -Recurse -Force |
+              Where-Object { $_.Name -match 'WebEngine' }
+          if ($leftover) { Write-Host "::error::WebEngine residue found!"; exit 1 }
+
+      - name: Import signing certificate (Windows)
+        if: runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
+        shell: pwsh
+        run: |
+          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx",
+            [Convert]::FromBase64String("${{ secrets.WINDOWS_CERTIFICATE_PFX }}"))
+
+      - name: Sign clipgrab.exe (Windows)
+        if: runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            /f "$env:RUNNER_TEMP\cert.pfx" /p "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" `
+            stage/clipgrab/clipgrab.exe
+
+      - name: Zip raw bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path stage/clipgrab -DestinationPath dist/clipgrab-windows.zip
+
+      - name: Build installer (Windows, Inno Setup)
+        id: innosetup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path packaging/windows/clipgrab.iss)) {
+            Write-Host "::notice::packaging/windows/clipgrab.iss not present — skipping installer."
+            exit 0
+          }
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $stage = (Resolve-Path stage/clipgrab).Path
+          $out   = (Resolve-Path dist).Path
+          & $iscc "/DAppVersion=${{ steps.version.outputs.version }}" `
+                  "/DStageDir=$stage" "/DOutputDir=$out" `
+                  "/DOutputBaseName=clipgrab-setup" packaging/windows/clipgrab.iss
+          "made=$(Test-Path dist/clipgrab-setup.exe)".ToLower() >> $env:GITHUB_OUTPUT
+
+      - name: Sign installer (Windows)
+        if: runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true' && steps.innosetup.outputs.made == 'true'
+        shell: pwsh
+        run: |
+          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
+              Sort-Object FullName | Select-Object -Last 1
+          & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            /f "$env:RUNNER_TEMP\cert.pfx" /p "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" `
+            dist/clipgrab-setup.exe
+
+      # ====================================================================
+      # Upload everything this job produced (raw bundle + installer/dmg).
+      # macOS emits just the .dmg; Linux/Windows emit the raw bundle
+      # (+ installer, where built).
+      # ====================================================================
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipgrab-${{ matrix.name }}
+          path: dist/*
+          if-no-files-found: error
+
+  # ======================================================================
+  # Scrubbed open-source snapshot: strip all private deployment / CI /
+  # signing / internal-notes paths via git-filter-repo and publish the
+  # result as a source .tar.gz alongside the binary releases.
+  # ======================================================================
+  source:
+    name: source-tarball
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # git-filter-repo needs full history — it refuses shallow clones.
+          fetch-depth: 0
+
+      - name: Install git-filter-repo
+        run: sudo apt-get update && sudo apt-get install -y git-filter-repo
+
+      - name: Export scrubbed source tarball
+        run: bash packaging/export-source.sh dist/clipgrab-source.tar.gz
+
+      - name: Upload source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clipgrab-source
+          path: dist/clipgrab-source.tar.gz
+          if-no-files-found: error

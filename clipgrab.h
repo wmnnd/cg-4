@@ -159,12 +159,10 @@ class ClipGrab : public QObject
         QTemporaryFile* updateFile;
         QDialog* helperDownloaderDialog;
         Ui::HelperDownloader* helperDownloaderUi;
-        QFile* youtubeDlFile;
         QNetworkReply* updateReply;
         video* currentVideo;
         video* currentSearch;
         QString youtubeDlPath;
-        QProcess *youtubeDlUpdateProcess;
 
     public slots:
         void errorHandler(QString);
@@ -189,8 +187,6 @@ class ClipGrab : public QObject
         void currentVideoStateChanged(video*);
         void downloadEnqueued();
         void downloadFinished(video*);
-        void downloadAboutToBeRemoved(video*);
-        void downloadRemoved();
         void searchFinished(video*);
         void youtubeDlDownloadFinished();
         void compatibleUrlFoundInClipboard(QString url);

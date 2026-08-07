@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=ClipGrab
+GenericName=Video Downloader
+Comment=Download and convert online videos
+Exec=clipgrab
+Icon=clipgrab
+Categories=AudioVideo;Network;
+Terminal=false

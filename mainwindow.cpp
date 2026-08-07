@@ -22,6 +22,8 @@
 
 
 #include "mainwindow.h"
+#include "loading_spinner.h"
+#include <QEvent>
 
 MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     : QMainWindow(parent, flags)
@@ -29,7 +31,8 @@ MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
     this->cg = cg;
     this->changeTabMapper = nullptr;
     this->downloadMapper = nullptr;
-    this->searchPage = nullptr;
+    this->thumbnailNAM = nullptr;
+    this->searchSpinner = nullptr;
     this->updatingComboQuality = false;
     ui.setupUi(this);
 }
@@ -37,7 +40,6 @@ MainWindow::MainWindow(ClipGrab* cg, QWidget *parent, Qt::WindowFlags flags)
 
 MainWindow::~MainWindow()
 {
-    delete this->searchPage;
 }
 
 void MainWindow::init()
@@ -103,14 +105,19 @@ void MainWindow::init()
     //*
     //* Search Tab
     //*
-    QWebEngineProfile* profile = new QWebEngineProfile;
-    this->searchPage = new SearchWebEnginePage(profile);
-    ui.searchWebEngineView->setPage(searchPage);
-    ui.searchWebEngineView->settings()->setAttribute(QWebEngineSettings::FocusOnNavigationEnabled, false);
-    ui.searchWebEngineView->setContextMenuPolicy(Qt::NoContextMenu);
-    connect(ui.searchWebEngineView->page(), SIGNAL(linkClicked(QUrl)), this, SLOT(handleSearchResultClicked(QUrl)));
+    thumbnailNAM = new QNetworkAccessManager(this);
+    ui.searchResults->setContextMenuPolicy(Qt::NoContextMenu);
+    connect(ui.searchResults, &QListWidget::itemActivated,
+            this, &MainWindow::handleSearchResultActivated);
+    connect(ui.searchResults, &QListWidget::itemClicked,
+            this, &MainWindow::handleSearchResultActivated);
+    // Loading animation floated over the (empty) results viewport while a
+    // search is in flight. The event filter keeps it sized to the viewport.
+    searchSpinner = new LoadingSpinner(ui.searchResults->viewport());
+    searchSpinner->hide();
+    ui.searchResults->viewport()->installEventFilter(this);
     connect(&searchTimer, SIGNAL(timeout()), this, SLOT(searchTimerTimeout()));
-    connect(cg, &ClipGrab::youtubeDlDownloadFinished, [=] {
+    connect(cg, &ClipGrab::youtubeDlDownloadFinished, [=, this] {
         YoutubeDl::find(true);
         this->updateSearch("");
         this->updateYoutubeDlVersionInfo();
@@ -224,7 +231,7 @@ void MainWindow::init()
     //* Drag and Drop
     //*
     this->setAcceptDrops(true);
-    this->ui.searchWebEngineView->setAcceptDrops(false);
+    this->ui.searchResults->setAcceptDrops(false);
 
     //*
     //*Keyboard shortcuts
@@ -610,64 +617,140 @@ void MainWindow::on_searchLineEdit_textChanged(QString keywords)
     searchTimer.start(1500);
 
     if (isTimerActive) return;
-    this->ui.searchWebEngineView->page()->load(QUrl("qrc:///search/loading-progress.html"));
+    showSearchLoading();
 }
 
 void MainWindow::updateSearch(QString keywords) {
-    if (this->ui.searchWebEngineView->page()->url().toString() != "qrc:///search/loading-progress.html") {
-        this->ui.searchWebEngineView->page()->load(QUrl("qrc:///search/loading-progress.html"));
+    // Show the spinner unless it's already up (the debounce in
+    // on_searchLineEdit_textChanged starts it on the first keystroke).
+    if (searchSpinner == nullptr || !searchSpinner->isVisible()) {
+        showSearchLoading();
     }
     cg->search(keywords);
 }
 
+void MainWindow::showSearchPlaceholder(const QString& text)
+{
+    if (searchSpinner != nullptr) searchSpinner->hide();
+    thumbnailRequests.clear();
+    ui.searchResults->clear();
+    // Placeholders read better as a single wide row than as one tile in an
+    // otherwise-empty grid, so flip the view mode while they're shown.
+    ui.searchResults->setViewMode(QListView::ListMode);
+    ui.searchResults->setCursor(Qt::ArrowCursor);
+    QListWidgetItem* item = new QListWidgetItem(text);
+    item->setFlags(Qt::ItemIsEnabled);
+    item->setTextAlignment(Qt::AlignCenter);
+    ui.searchResults->addItem(item);
+}
+
+void MainWindow::showSearchLoading()
+{
+    // Drop any in-flight thumbnail loads and clear the grid, then float the
+    // animated spinner over the now-empty viewport.
+    thumbnailRequests.clear();
+    ui.searchResults->clear();
+    if (searchSpinner != nullptr) {
+        searchSpinner->setGeometry(ui.searchResults->viewport()->rect());
+        searchSpinner->show();
+        searchSpinner->raise();
+    }
+}
+
+bool MainWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    // Keep the loading spinner covering the results viewport as it resizes.
+    if (searchSpinner != nullptr
+            && watched == ui.searchResults->viewport()
+            && event->type() == QEvent::Resize) {
+        searchSpinner->setGeometry(ui.searchResults->viewport()->rect());
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
+// YouTube's hqdefault thumbnail is a 4:3 image with the real 16:9 frame
+// letterboxed by black bars top and bottom. Crop to the centred 16:9 region so
+// no bars show and the picture fills the cell — which is also how YouTube's own
+// grid presents them. A no-op for sources that are already 16:9.
+static QPixmap cropTo16x9(const QPixmap& src)
+{
+    if (src.isNull() || src.height() == 0) return src;
+    const double target = 16.0 / 9.0;
+    const double aspect = double(src.width()) / double(src.height());
+    if (qAbs(aspect - target) < 0.01) return src;
+    if (aspect > target) {                          // too wide → trim left/right
+        const int w = qRound(src.height() * target);
+        return src.copy((src.width() - w) / 2, 0, w, src.height());
+    }
+    const int h = qRound(src.width() / target);     // too tall → trim top/bottom
+    return src.copy(0, (src.height() - h) / 2, src.width(), h);
+}
+
+void MainWindow::requestThumbnail(QListWidgetItem* item, const QString& url)
+{
+    if (url.isEmpty()) return;
+    QNetworkReply* reply = thumbnailNAM->get(QNetworkRequest(QUrl(url)));
+    thumbnailRequests.insert(reply, item);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        QListWidgetItem* target = thumbnailRequests.take(reply);
+        reply->deleteLater();
+        if (target == nullptr) return;  // item was cleared before reply arrived
+        // Confirm the item still belongs to the current list (clearing the
+        // list deletes the items, so a dangling pointer would crash).
+        if (ui.searchResults->row(target) < 0) return;
+        if (reply->error() != QNetworkReply::NoError) return;
+        QPixmap pm;
+        if (pm.loadFromData(reply->readAll())) {
+            target->setIcon(QIcon(cropTo16x9(pm)));
+        }
+    });
+}
+
 void MainWindow::handleSearchResults(video* searchPlaylist)
 {
+    if (searchSpinner != nullptr) searchSpinner->hide();
+    // Cancel any thumbnail requests still in flight from the previous search
+    // — their target items are about to be destroyed by clear().
+    thumbnailRequests.clear();
+    ui.searchResults->clear();
+
     QList<video*> videos = searchPlaylist->getPlaylistVideos();
+    if (videos.isEmpty()) {
+        showSearchPlaceholder(tr("No results found."));
+        return;
+    }
 
-    QString searchHtml;
-    #ifdef Q_OS_MAC
-        QString fontFamily = "Helvetica Neue";
-    #else
-        QFontDatabase fontDatabase;
-        QString font = fontDatabase.systemFont(QFontDatabase::GeneralFont).family();
-        QString fontFamily = "'" + font + "',  sans-serif";
-    #endif
-    searchHtml.append("<!doctype html>");
-    searchHtml.append("<html>");
-    searchHtml.append("<head>");
-    searchHtml.append("<style>body {font-family: " + fontFamily + "}</style>");
-    searchHtml.append("<link rel=\"stylesheet\" href=\"qrc:///search/search-styles.css\"></link>");
-    searchHtml.append("</head>");
-    searchHtml.append("<body>");
-
+    ui.searchResults->setViewMode(QListView::IconMode);
+    ui.searchResults->setCursor(Qt::PointingHandCursor);
+    QPixmap placeholder(224, 126);
+    placeholder.fill(QColor(220, 220, 220));
     for (int i = 0; i < videos.length(); i++) {
         QString link = videos.at(i)->getUrl();
         QString title = videos.at(i)->getTitle();
         QString thumbnail = videos.at(i)->getThumbnail();
         QString duration = cg->humanizeSeconds(videos.at(i)->getDuration());
-        searchHtml.append("<a href=\"" + link + "\" class=\"entry\">");
-        searchHtml.append("<span class=\"title\">" + title + "</span>");
-        searchHtml.append("<span class=\"thumbnail\" style=\"background-image: url('" + thumbnail + "')\"</span>");
-        if (!duration.isEmpty()) {
-            searchHtml.append("<span class=\"duration\">" + duration + "</span>");
-        }
-        searchHtml.append("</a>");
-    }
 
-    searchHtml.append("</body>");
-    searchHtml.append("</html>");
-    if (videos.length() == 0) {
-        QFile loadingFailedHTML(":/search/loading-failed.html");
-        loadingFailedHTML.open(QFile::ReadOnly);
-        searchHtml = QString(loadingFailedHTML.readAll()).replace("%NORESULTS%", tr("No results found."));
+        QString label = title;
+        if (!duration.isEmpty()) label += "\n" + duration;
+
+        QListWidgetItem* item = new QListWidgetItem(QIcon(placeholder), label);
+        item->setData(Qt::UserRole, link);
+        // Each card: 224×126 (16:9) thumbnail + wrapped title + duration.
+        // sizeHint forces an explicit cell size so the grid layout stays
+        // stable even before thumbnails finish loading.
+        item->setSizeHint(QSize(264, 208));
+        ui.searchResults->addItem(item);
+        requestThumbnail(item, thumbnail);
     }
-    this->ui.searchWebEngineView->page()->setHtml(searchHtml);
 }
 
-void MainWindow::handleSearchResultClicked(const QUrl & url)
+void MainWindow::handleSearchResultActivated(QListWidgetItem* item)
 {
-    this->ui.downloadLineEdit->setText(url.toString());
-    this->ui.mainTab->setCurrentIndex(1);
+    if (item == nullptr) return;
+    QString url = item->data(Qt::UserRole).toString();
+    if (url.isEmpty()) return;
+    ui.downloadLineEdit->setText(url);
+    ui.mainTab->setCurrentIndex(1);
 }
 
 void MainWindow::on_downloadComboFormat_currentIndexChanged(int index)
@@ -780,15 +863,15 @@ void MainWindow::dropEvent(QDropEvent *event)
 }
 
 void MainWindow::updateYoutubeDlVersionInfo() {
-    QString youtubeDlVersion = YoutubeDl::getVersion();
-    QString pythonVersion = YoutubeDl::getPythonVersion();
-    QString youtubeDlPath = YoutubeDl::find();
+    QString label = tr("yt-dlp: %1 (%2)")
+            .arg(YoutubeDl::find(), YoutubeDl::getVersion());
+    // Only Linux runs yt-dlp through an external interpreter; on
+    // macOS/Windows Python is baked into the yt-dlp bundle.
     QString pythonPath = YoutubeDl::findPython();
-    QString label = tr("youtube-dlp: %1 (%2)\nPython: %3 (%4)")
-            .arg(youtubeDlPath)
-            .arg(youtubeDlVersion)
-            .arg(pythonPath)
-            .arg(pythonVersion);
+    if (!pythonPath.isEmpty()) {
+        label += "\n" + tr("Python: %1 (%2)")
+                .arg(pythonPath, YoutubeDl::getPythonVersion());
+    }
     ui.labelYoutubeDlVersionInfo->setText(label);
 };
 

@@ -31,6 +31,7 @@
 #include <QDebug>
 #include "mainwindow.h"
 #include "clipgrab.h"
+#include "mac_colorspace.h"
 #include "video.h"
 
 int main(int argc, char *argv[])
@@ -40,6 +41,11 @@ int main(int argc, char *argv[])
     QCoreApplication::setOrganizationDomain("clipgrab.org");
     QCoreApplication::setApplicationName("ClipGrab");
     QCoreApplication::setApplicationVersion(QStringLiteral(CLIPGRAB_VERSION));
+
+    // Colour-manage every window as sRGB so colours match browser rendering
+    // instead of oversaturating on wide-gamut (Display P3) macOS screens.
+    // No-op off macOS. Installed before any window is shown.
+    installAppWideSRGBColorSpace();
 
     QCommandLineParser parser;
     parser.setApplicationDescription("ClipGrab");

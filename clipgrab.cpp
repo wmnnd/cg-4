@@ -380,10 +380,10 @@ void ClipGrab::parseUpdateInfo(QNetworkReply* reply)
                 this->updateMessageUi->progressBar->hide();
                 this->updateMessageUi->labelDownloadProgress->hide();
 
-                this->updateMessageUi->webEngineView->setPage(new QWebEnginePage(new QWebEngineProfile));
-                this->updateMessageUi->webEngineView->setHtml(updateNotesDocument.toString());
-                this->updateMessageUi->webEngineView->setContextMenuPolicy(Qt::NoContextMenu);
-                this->updateMessageUi->webEngineView->setAcceptDrops(false);
+                this->updateMessageUi->textBrowser->setOpenExternalLinks(true);
+                this->updateMessageUi->textBrowser->setHtml(updateNotesDocument.toString());
+                this->updateMessageUi->textBrowser->setContextMenuPolicy(Qt::NoContextMenu);
+                this->updateMessageUi->textBrowser->setAcceptDrops(false);
 
                 this->updateReply = nullptr;
                 this->updateFile = nullptr;
@@ -574,14 +574,9 @@ void ClipGrab::updateDownloadFinished()
 
 void ClipGrab::downloadYoutubeDl(bool force) {
     QString minVersion = QSettings().value("minYoutubeDlVersion", "2021.09.25").toString();
-    bool youtubeDlInstalled = !YoutubeDl::find().isEmpty();
-    if (force == false && youtubeDlInstalled) {
-        QString installedVersion = YoutubeDl::getVersion();
-        qDebug() << "Found youtube-dlp " << installedVersion;
-        if (installedVersion >= minVersion) {
-            QSettings().remove("minYoutubeDlVersion");
-            return;
-        }
+    if (force == false && YoutubeDl::isInstalledAndCurrent(minVersion)) {
+        QSettings().remove("minYoutubeDlVersion");
+        return;
     }
     if (QSettings().value("disableYoutubeDlDownload", false).toBool()) return;
 
@@ -601,62 +596,32 @@ void ClipGrab::downloadYoutubeDl(bool force) {
 void ClipGrab::startYoutubeDlDownload() {
     this->helperDownloaderDialog->setDisabled(true);
 
-    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    if (!QDir().exists(dir)) {
-        QDir().mkpath(dir);
-    }
+    // The downloader owns the network + filesystem flow; this call site only
+    // wires its progress into the helper UI and reacts to the outcome.
+    YoutubeDlDownloader* downloader = new YoutubeDlDownloader(this);
 
-    dir.remove("youtube-dl");
-    this->youtubeDlFile = new  QFile(dir + "/yt-dlp");
-    youtubeDlFile->open(QFile::WriteOnly);
-    if (!youtubeDlFile->isOpen()) {
-        errorHandler(tr("Unable to write to %1").arg(youtubeDlFile->fileName()));
+    connect(downloader, &YoutubeDlDownloader::progress, this,
+            [this](qint64 received, qint64 total) {
+        this->helperDownloaderUi->progressBar->setMaximum(total);
+        this->helperDownloaderUi->progressBar->setValue(received);
+    });
+    connect(downloader, &YoutubeDlDownloader::failed, this,
+            [this, downloader](const QString& message) {
+        downloader->deleteLater();
+        errorHandler(message);
         QApplication::quit();
-    }
-
-    QString youtubeDlUrl = settings.value("youtubeDlUrl", "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp").toString();
-    QNetworkRequest request;
-    request.setUrl(QUrl(youtubeDlUrl));
-    // Qt6 follows redirects by default with NoLessSafeRedirectPolicy.
-    QNetworkAccessManager* youtubeDlNAM = new QNetworkAccessManager();
-    QNetworkReply* reply = youtubeDlNAM->get(request);
-
-    connect(reply, &QNetworkReply::readyRead, [=]() {
-        youtubeDlFile->write(reply->readAll());
     });
-    connect(reply, &QNetworkReply::downloadProgress, [=](qint64 bytesReceived, qint64 bytesTotal) {
-        this->helperDownloaderUi->progressBar->setMaximum(bytesTotal);
-        this->helperDownloaderUi->progressBar->setValue(bytesReceived);
-    });
-
-    connect(reply, &QNetworkReply::sslErrors, [=](QList<QSslError> errors) {
-        for (int i = 0; i < errors.length(); i++) {
-            QString errorString = errors.at(i).errorString();
-            QString certInfo = errors.at(i).certificate().issuerDisplayName() + " " + errors.at(i).certificate().subjectDisplayName() + " " +  QString::fromUtf8(errors.at(i).certificate().serialNumber()) + " " + QString::number((int) errors.at(i).error());
-            errorHandler(tr("SSL error: %1 \n%2").arg(errorString).arg(certInfo));
-        }
-    });
-    connect(reply, &QNetworkReply::finished, [=] {
-        youtubeDlFile->close();
-
-        if (reply->error() != QNetworkReply::NetworkError::NoError) {
-            errorHandler(tr("Error downloading youtube-dlp: %1").arg(reply->errorString()));
-            QApplication::quit();
-        }
-
+    connect(downloader, &YoutubeDlDownloader::succeeded, this, [this, downloader] {
+        downloader->deleteLater();
         this->helperDownloaderDialog->accept();
         emit youtubeDlDownloadFinished();
     });
+
+    downloader->start();
 }
 
 void ClipGrab::updateYoutubeDl() {
-    if (QSettings().value("disableYoutubeDlUpdate", false).toBool()) return;
-    youtubeDlUpdateProcess = YoutubeDl::instance(QStringList() << "--update");
-    youtubeDlUpdateProcess->start();
-    connect(youtubeDlUpdateProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), [=] {
-        youtubeDlUpdateProcess->deleteLater();
-        youtubeDlUpdateProcess = nullptr;
-    });
+    YoutubeDl::startUpdate();
 }
 
 void ClipGrab::skipUpdate()
@@ -691,14 +656,12 @@ video* ClipGrab::getCurrentVideo() {
 void ClipGrab::enqueueDownload(video* video) {
     if (video == nullptr || video->getState() != video::state::fetched || downloads.contains(video)) return;
 
-    connect(video, &video::stateChanged, this, [=] {
-        if (video->getState() == video::state::finished) {
+    connect(video, &video::stateChanged, this, [=, this] {
+        // Only report the transition into "finished" while the video is still
+        // enqueued, so every download announces itself exactly once. Taking it
+        // off the list afterwards is the download list model's job.
+        if (video->getState() == video::state::finished && downloads.contains(video)) {
             emit downloadFinished(video);
-            if (QSettings().value("RemoveFinishedDownloads", false).toBool()) {
-                emit downloadAboutToBeRemoved(video);
-                downloads.removeAll(video);
-                emit downloadRemoved();
-            }
         }
        if (getRunningDownloadsCount() == 0) emit allDownloadsCanceled();
     });

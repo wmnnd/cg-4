@@ -4,13 +4,13 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
     : QAbstractItemModel(parent), cg(cg)
 {
 
-    connect(cg, &ClipGrab::downloadEnqueued, this, [=] {
+    connect(cg, &ClipGrab::downloadEnqueued, this, [=, this] {
         if (cg->downloads.isEmpty()) return;
         video* enqueuedVideo = cg->downloads.last();
         beginInsertRows(QModelIndex(), 0, 0);
         endInsertRows();
 
-        connect(enqueuedVideo, &video::downloadProgressChanged, this, [=] {
+        connect(enqueuedVideo, &video::downloadProgressChanged, this, [=, this] {
             int idx = cg->downloads.indexOf(enqueuedVideo);
             if (idx < 0) return;
             int row = cg->downloads.size() - idx - 1;
@@ -20,7 +20,7 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
         });
 
 
-        connect(enqueuedVideo, &video::stateChanged, this, [=] {
+        connect(enqueuedVideo, &video::stateChanged, this, [=, this] {
             int idx = cg->downloads.indexOf(enqueuedVideo);
             if (idx < 0) return;
             int row = cg->downloads.size() - idx - 1;
@@ -30,15 +30,19 @@ DownloadListModel::DownloadListModel(ClipGrab* cg, QObject *parent)
         });
     });
 
-    connect(cg, &ClipGrab::downloadAboutToBeRemoved, this, [=](video* removedVideo) {
-        int idx = cg->downloads.indexOf(removedVideo);
+    // Dropping a finished download is one indivisible operation: the row
+    // bookkeeping and the list mutation belong together. Splitting them across
+    // separate signals lets one half run without the other and corrupts the
+    // model, so everything happens here, between a single begin/end pair.
+    connect(cg, &ClipGrab::downloadFinished, this, [=, this](video* finishedVideo) {
+        if (!cg->settings.value("RemoveFinishedDownloads", false).toBool()) return;
+
+        int idx = cg->downloads.indexOf(finishedVideo);
         if (idx < 0) return;
         int row = cg->downloads.size() - idx - 1;
-        if (row < 0 || row >= cg->downloads.size()) return;
-        beginRemoveRows(QModelIndex(), row, row);
-    });
 
-    connect(cg, &ClipGrab::downloadRemoved, this, [=] {
+        beginRemoveRows(QModelIndex(), row, row);
+        cg->downloads.removeAt(idx);
         endRemoveRows();
     });
 }

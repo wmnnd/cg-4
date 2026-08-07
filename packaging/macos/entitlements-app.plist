@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+        Entitlements for the ClipGrab.app main bundle under the hardened
+        runtime. Deliberately minimal: the app itself does not JIT and does
+        not need library-validation exceptions because every nested binary
+        (Qt frameworks, ffmpeg, deno) is re-signed with our own Developer ID.
+        yt-dlp / ffmpeg / deno run as separate child processes, and spawning
+        them requires no entitlement on the parent.
+    -->
+</dict>
+</plist>

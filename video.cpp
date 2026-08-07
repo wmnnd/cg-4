@@ -578,14 +578,20 @@ void video::handleProcessFinished(int /*exitCode*/, QProcess::ExitStatus exitSta
             }
 
             state = state::converting;
+            emit stateChanged();
+
             QFile* file = new QFile();
             file->setFileName(finalDownloadFilename);
+            // Converters may run synchronously (converter_copy does) and advance
+            // the state to finished/error themselves, emitting stateChanged() on
+            // the way. Nothing must be emitted after this call, or observers see
+            // a second "finished" notification for the same download.
             targetConverter->startConversion(file, targetFilename, qualities.at(selectedQuality).containerName, metaTitle, metaArtist, targetConverterMode);
-        } else {
-            state = state::error;
+            return;
         }
+        state = state::error;
         emit stateChanged();
-        break;
+        return;
     case state::pausing:
         state = state::paused;
         emit stateChanged();

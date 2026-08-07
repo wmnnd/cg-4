@@ -2,42 +2,14 @@
 #define MESSAGE_DIALOG_H
 
 #include <QDialog>
-#include <QDesktopServices>
+#include <QString>
 #include <QUrl>
-#include <QWebEnginePage>
-#include <QWebEngineProfile>
+
+class QNetworkAccessManager;
 
 namespace Ui {
 class messageDialog;
 }
-
-class MessageDialogWebEnginePage : public QWebEnginePage
-{
-    Q_OBJECT
-public:
-    MessageDialogWebEnginePage(QWebEngineProfile* profile, QObject* parent = nullptr) :  QWebEnginePage(profile, parent)
-    {
-        this->setAudioMuted(true);
-    }
-    bool acceptNavigationRequest(const QUrl & url, QWebEnginePage::NavigationType type, bool /*isMainFrame*/) override
-    {
-        if (type == QWebEnginePage::NavigationTypeLinkClicked)
-        {
-            emit linkClicked(url);
-        }
-        if (type == QWebEnginePage::NavigationTypeTyped)
-        {
-            return true;
-        }
-        return false;
-    }
-protected:
-    void javaScriptConsoleMessage(QWebEnginePage::JavaScriptConsoleMessageLevel /*level*/, const QString & /*message*/, int /*lineNumber*/, const QString & /*sourceID*/) override {
-        //Don't log anything
-    }
-signals:
-    void linkClicked(const QUrl & url);
-};
 
 class messageDialog : public QDialog
 {
@@ -51,11 +23,14 @@ public:
 
 private:
     Ui::messageDialog *ui;
-    MessageDialogWebEnginePage* page;
+    QNetworkAccessManager* nam;
+    QUrl loadedUrl;
     QString linkPolicy;
 
+    void load(const QUrl & url);
+
 private slots:
-    void handleLink(const QUrl);
+    void handleLink(const QUrl & url);
 };
 
 #endif // MESSAGE_DIALOG_H
