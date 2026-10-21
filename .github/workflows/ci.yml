@@ -380,7 +380,7 @@ jobs:
           # print the new value (the MSI's Certum Authenticode signature is
           # verified regardless).
           SIMPLYSIGN_VERSION: 9.4.4.92
-          SIMPLYSIGN_MSI_SHA256: ''
+          SIMPLYSIGN_MSI_SHA256: 8ec420fc27798b86078b7bd02fe7152097e1b3005bab51820eaca8e57df84da3
         run: ./packaging/windows/certum/Install-SimplySign.ps1
 
       - name: Connect to SimplySign (Windows)

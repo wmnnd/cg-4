@@ -129,13 +129,13 @@ function Find-CertumCertificate {
         $wanted = ($Thumbprint -replace '[\s:]', '').ToUpperInvariant()
         return ($certs | Where-Object { $_.Thumbprint -eq $wanted -and $_.HasPrivateKey } | Select-Object -First 1)
     }
-    $matches = @($certs | Where-Object {
+    $candidates = @($certs | Where-Object {
         $_.HasPrivateKey -and
         $_.Issuer -like '*Certum*' -and
         @($_.EnhancedKeyUsageList | Where-Object { $_.ObjectId -eq '1.3.6.1.5.5.7.3.3' }).Count -gt 0
     })
-    if ($matches.Count -eq 0) { return $null }
-    return $matches[0]
+    if ($candidates.Count -eq 0) { return $null }
+    return $candidates[0]
 }
 
 function Find-SignTool {

@@ -62,10 +62,13 @@ $wshell = New-Object -ComObject WScript.Shell
 function Get-SimplySignWindow {
     # The login dialog is the only top-level window the client shows; the
     # tray daemon has no main window, so MainWindowHandle filters it out.
-    @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+    # Callers wrap the result in @(): PowerShell unrolls pipeline output, so an
+    # empty result is $null (no .Count under strict mode) and a single hit is
+    # a bare Process object.
+    Get-Process -ErrorAction SilentlyContinue | Where-Object {
         $_.MainWindowHandle -ne 0 -and
         ($_.ProcessName -like '*SimplySign*' -or $_.MainWindowTitle -like '*SimplySign*')
-    })
+    }
 }
 
 function Set-WindowFocus {
@@ -101,7 +104,7 @@ $window   = $null
 $deadline = (Get-Date).AddSeconds($WindowTimeoutSeconds)
 while (-not $window -and (Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 2
-    $found = Get-SimplySignWindow
+    $found = @(Get-SimplySignWindow)
     if ($found.Count -gt 0) { $window = $found[0] } else { Start-Process -FilePath $appPath | Out-Null }
 }
 if (-not $window) { throw 'SimplySign Desktop login window did not appear.' }
@@ -135,18 +138,18 @@ for ($attempt = 1; $attempt -le 2 -and -not $loggedIn; $attempt++) {
     $closeBy = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $closeBy) {
         Start-Sleep -Seconds 2
-        if ((Get-SimplySignWindow).Count -eq 0) { $loggedIn = $true; break }
+        if (@(Get-SimplySignWindow).Count -eq 0) { $loggedIn = $true; break }
     }
     if (-not $loggedIn -and $attempt -lt 2) {
         Write-Warning 'Login window still open; dismissing any error dialog and retrying.'
-        $found = Get-SimplySignWindow
+        $found = @(Get-SimplySignWindow)
         if ($found.Count -gt 0) {
             $window = $found[0]
             Set-WindowFocus -Process $window
             Send-Keys '{ENTER}' 500      # closes an "Invalid user name or token" box
             Send-Keys '{ESC}' 1000
         }
-        $found = Get-SimplySignWindow
+        $found = @(Get-SimplySignWindow)
         if ($found.Count -eq 0) { throw 'SimplySign Desktop login window disappeared without mounting a certificate.' }
         $window = $found[0]
     }
