@@ -45,15 +45,52 @@ uploads the raw `.zip`), so this never blocks CI.
 
 ## Code signing (both the exe and the installer)
 
-Signing runs only when the signing secrets are configured (see the repo-level
+Signing runs only when the Certum secrets are configured (see the repo-level
 secrets below); otherwise unsigned artifacts are produced. The staged
 `clipgrab.exe` is signed before packaging, and the finished installer is signed
-after ISCC runs.
+after ISCC runs. Do **not** add a `SignTool=` directive to the `.iss`: the
+workflow signs the finished installer itself.
+
+### How Windows signing works (Certum "Code Signing in the Cloud")
+
+The certificate is an OV code-signing certificate whose private key lives on
+Certum's cloud HSM (SimplySign). Certum provides no machine credential for it:
+their SimplySign Desktop client logs in with the account e-mail plus a TOTP
+code from the SimplySign mobile app, then exposes the certificate to Windows as
+a virtual smart card. The scripts in `certum/` reproduce exactly that on the
+runner, with no third-party actions:
+
+| Script                      | Role                                                                 |
+|-----------------------------|----------------------------------------------------------------------|
+| `Install-SimplySign.ps1`    | Downloads the pinned SimplySign Desktop MSI from Certum, verifies its Certum/Asseco Authenticode signature (and the pinned SHA256 once set), installs it silently. |
+| `Connect-SimplySign.ps1`    | Computes the TOTP from the seed, drives the client's login window by keystrokes, waits for the certificate to appear in `Cert:\CurrentUser\My`, exports its thumbprint as a step output. |
+| `Sign-File.ps1`             | `signtool sign /sha1 <thumbprint> /fd sha256 /tr http://time.certum.pl /td sha256`, then `signtool verify /pa`. |
+| `Disconnect-SimplySign.ps1` | Closes the client and purges the certificate from the store; runs with `if: always()`. |
+| `Common.ps1`                | Shared helpers (Base32, TOTP, certificate/signtool lookup). `Test-Common.ps1` checks the TOTP code against the RFC 6238 vectors and runs on any OS with `pwsh`. |
+
+Pin the SimplySign Desktop version and MSI hash in `ci.yml`
+(`SIMPLYSIGN_VERSION` / `SIMPLYSIGN_MSI_SHA256`); with an empty hash the
+install step prints the computed value once so it can be pasted in, the same
+bootstrap flow as `cmake/PrepareDependencies.cmake`.
+
+Caveats worth knowing:
+
+- The login is driven by `SendKeys` into Certum's GUI, so a SimplySign Desktop
+  update that changes the login dialog can break it. Keep the version pinned
+  and bump it deliberately.
+- Certum states that CI/CD use is not officially supported; this is the same
+  approach the community uses, just kept in-repo.
+- The TOTP seed plus the account e-mail are sufficient to sign as the company.
+  Treat `CERTUM_TOTP_SECRET` like the private key: repository secrets are fine
+  for a single-maintainer private repo, otherwise move the Windows signing into
+  a protected GitHub Environment with required reviewers. If the seed leaks,
+  re-issue the SimplySign QR code in the Certum panel (that invalidates the
+  old seed) and update the secret.
 
 # Required CI secrets
 
 All signing/notarization is **gated on these being present** — with none set,
-CI still builds and uploads unsigned `.zip` / `.app` / `.exe` / raw artifacts.
+CI still builds and uploads unsigned `.zip` / `.dmg` / `.exe` / raw artifacts.
 
 ## macOS (code signing + notarization)
 
@@ -89,9 +126,21 @@ cert automatically); notarization additionally needs one of the two credential
 sets. Signing without notarization is supported (the app is signed but the
 `.dmg` isn't stapled).
 
-## Windows (code signing)
+## Windows (code signing, Certum SimplySign)
 
 | Secret                        | What it is                                                    |
 |-------------------------------|---------------------------------------------------------------|
-| `WINDOWS_CERTIFICATE_PFX`     | base64 of the code-signing cert (`.pfx`).                     |
-| `WINDOWS_CERTIFICATE_PASSWORD`| password for that `.pfx`.                                     |
+| `CERTUM_USERNAME`             | the SimplySign account e-mail (the login used in the SimplySign apps). |
+| `CERTUM_TOTP_SECRET`          | the TOTP seed: either the Base32 string, or the whole `otpauth://totp/...` URI encoded in the SimplySign activation QR code (the URI also carries algorithm/digits/period). Certum's seeds use SHA-256, 6 digits, 30 s. |
+| `CERTUM_CERT_THUMBPRINT`      | *(optional)* SHA-1 thumbprint of the certificate to use. Auto-detected (first Certum-issued code-signing cert with a private key) if omitted; set it only if the account holds several certificates. |
+
+Both `CERTUM_USERNAME` and `CERTUM_TOTP_SECRET` must be present for the
+Windows signing steps to run; with either missing the job uploads unsigned
+artifacts.
+
+Getting the seed: during SimplySign activation Certum shows a QR code for the
+mobile app. Decode that QR (any QR reader) and store the resulting
+`otpauth://` URI as `CERTUM_TOTP_SECRET`. It is the same seed the phone app
+uses, so the phone keeps working alongside CI. Enrolling the phone *and*
+recording the URI from the same QR is the simplest way to keep a manual
+fallback.
