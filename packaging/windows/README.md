@@ -63,7 +63,7 @@ runner, with no third-party actions:
 | Script                      | Role                                                                 |
 |-----------------------------|----------------------------------------------------------------------|
 | `Install-SimplySign.ps1`    | Downloads the pinned SimplySign Desktop MSI from Certum, verifies its Certum/Asseco Authenticode signature (and the pinned SHA256 once set), installs it silently. |
-| `Connect-SimplySign.ps1`    | Computes the TOTP from the seed, drives the client's login window by keystrokes, waits for the certificate to appear in `Cert:\CurrentUser\My`, exports its thumbprint as a step output. |
+| `Connect-SimplySign.ps1`    | Computes the TOTP from the seed, drives the client's login window by keystrokes, waits for the certificate to appear in `Cert:\CurrentUser\My` (the only success criterion), exports its thumbprint as a step output. On failure the `simplysign-diagnostics` job artifact holds screenshots and a UI Automation dump of the client's windows. |
 | `Sign-File.ps1`             | `signtool sign /sha1 <thumbprint> /fd sha256 /tr http://time.certum.pl /td sha256`, then `signtool verify /pa`. |
 | `Disconnect-SimplySign.ps1` | Closes the client and purges the certificate from the store; runs with `if: always()`. |
 | `Common.ps1`                | Shared helpers (Base32, TOTP, certificate/signtool lookup). `Test-Common.ps1` checks the TOTP code against the RFC 6238 vectors and runs on any OS with `pwsh`. |
