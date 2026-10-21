@@ -47,7 +47,8 @@ jobs:
           MAC_CERT: ${{ secrets.MACOS_CERTIFICATE_P12 }}
           MAC_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
           MAC_NOTARY_APPLEID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
-          WIN_CERT: ${{ secrets.WINDOWS_CERTIFICATE_PFX }}
+          CERTUM_USERNAME: ${{ secrets.CERTUM_USERNAME }}
+          CERTUM_TOTP_SECRET: ${{ secrets.CERTUM_TOTP_SECRET }}
         run: |
           echo "mac_sign=$([[ -n "$MAC_CERT" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           # Notarization needs EITHER the API key OR the Apple-ID credential set.
@@ -56,7 +57,13 @@ jobs:
           else
             echo "mac_notarize=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "win_sign=$([[ -n "$WIN_CERT" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          # Windows signs with a Certum "Code Signing in the Cloud" certificate;
+          # both the SimplySign account name and its TOTP seed are needed.
+          if [[ -n "$CERTUM_USERNAME" && -n "$CERTUM_TOTP_SECRET" ]]; then
+            echo "win_sign=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "win_sign=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Install Linux build deps (Qt6 from apt)
         if: runner.os == 'Linux'
@@ -359,22 +366,39 @@ jobs:
               Where-Object { $_.Name -match 'WebEngine' }
           if ($leftover) { Write-Host "::error::WebEngine residue found!"; exit 1 }
 
-      - name: Import signing certificate (Windows)
+      # Windows code signing uses a Certum "Code Signing in the Cloud"
+      # certificate. The private key never leaves Certum's HSM: SimplySign
+      # Desktop (Certum's own client) mounts it as a virtual smart card after a
+      # login with the account name + a TOTP code, and signtool then signs by
+      # thumbprint. The scripts under packaging/windows/certum/ are part of
+      # this repo; no third-party actions are involved.
+      - name: Install SimplySign Desktop (Windows)
         if: runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
         shell: pwsh
-        run: |
-          [IO.File]::WriteAllBytes("$env:RUNNER_TEMP\cert.pfx",
-            [Convert]::FromBase64String("${{ secrets.WINDOWS_CERTIFICATE_PFX }}"))
+        env:
+          # Bump together. Leave the SHA empty for one run to have the script
+          # print the new value (the MSI's Certum Authenticode signature is
+          # verified regardless).
+          SIMPLYSIGN_VERSION: 9.4.4.92
+          SIMPLYSIGN_MSI_SHA256: 8ec420fc27798b86078b7bd02fe7152097e1b3005bab51820eaca8e57df84da3
+        run: ./packaging/windows/certum/Install-SimplySign.ps1
+
+      - name: Connect to SimplySign (Windows)
+        id: certum
+        if: runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
+        shell: pwsh
+        env:
+          CERTUM_USERNAME: ${{ secrets.CERTUM_USERNAME }}
+          CERTUM_TOTP_SECRET: ${{ secrets.CERTUM_TOTP_SECRET }}
+          CERTUM_CERT_THUMBPRINT: ${{ secrets.CERTUM_CERT_THUMBPRINT }}
+        run: ./packaging/windows/certum/Connect-SimplySign.ps1
 
       - name: Sign clipgrab.exe (Windows)
         if: runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
         shell: pwsh
-        run: |
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
-              Sort-Object FullName | Select-Object -Last 1
-          & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-            /f "$env:RUNNER_TEMP\cert.pfx" /p "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" `
-            stage/clipgrab/clipgrab.exe
+        env:
+          CERTUM_CERT_THUMBPRINT: ${{ steps.certum.outputs.thumbprint }}
+        run: ./packaging/windows/certum/Sign-File.ps1 -Path stage/clipgrab/clipgrab.exe
 
       - name: Zip raw bundle (Windows)
         if: runner.os == 'Windows'
@@ -402,12 +426,26 @@ jobs:
       - name: Sign installer (Windows)
         if: runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true' && steps.innosetup.outputs.made == 'true'
         shell: pwsh
-        run: |
-          $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe" |
-              Sort-Object FullName | Select-Object -Last 1
-          & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-            /f "$env:RUNNER_TEMP\cert.pfx" /p "${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}" `
-            dist/clipgrab-setup.exe
+        env:
+          CERTUM_CERT_THUMBPRINT: ${{ steps.certum.outputs.thumbprint }}
+        run: ./packaging/windows/certum/Sign-File.ps1 -Path dist/clipgrab-setup.exe
+
+      - name: Disconnect from SimplySign (Windows)
+        # always(): close the cloud session even when a signing step failed.
+        if: always() && runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
+        shell: pwsh
+        run: ./packaging/windows/certum/Disconnect-SimplySign.ps1
+
+      - name: Upload SimplySign diagnostics (Windows)
+        # Screenshots + UI dumps from Connect-SimplySign.ps1, only when the
+        # job failed. They can show the account e-mail, never the TOTP.
+        if: failure() && runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simplysign-diagnostics
+          path: ${{ runner.temp }}/simplysign-diag
+          if-no-files-found: ignore
+          retention-days: 7
 
       # ====================================================================
       # Upload everything this job produced (raw bundle + installer/dmg).
