@@ -436,6 +436,17 @@ jobs:
         shell: pwsh
         run: ./packaging/windows/certum/Disconnect-SimplySign.ps1
 
+      - name: Upload SimplySign diagnostics (Windows)
+        # Screenshots + UI dumps from Connect-SimplySign.ps1, only when the
+        # job failed. They can show the account e-mail, never the TOTP.
+        if: failure() && runner.os == 'Windows' && steps.gate.outputs.win_sign == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: simplysign-diagnostics
+          path: ${{ runner.temp }}/simplysign-diag
+          if-no-files-found: ignore
+          retention-days: 7
+
       # ====================================================================
       # Upload everything this job produced (raw bundle + installer/dmg).
       # macOS emits just the .dmg; Linux/Windows emit the raw bundle
